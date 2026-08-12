@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '4.4';
+const APP_VERSION = '4.8';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -212,6 +212,10 @@ const Icon = {
   Monitor: phosphorIcon('monitor'),
   Edit: phosphorIcon('pencil-simple'),
   Bar: phosphorIcon('chart-bar'),
+  Download: phosphorIcon('download-simple'),
+  Upload: phosphorIcon('upload-simple'),
+  Copy: phosphorIcon('copy'),
+  ShareIcon: phosphorIcon('share-network'),
 };
 
 // ============================================================
@@ -388,16 +392,85 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
   );
 }
 
-function SettingsScreen({ theme, mode, setMode, onBack }) {
+function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored }) {
   const options = [
     { key: 'light', label: 'Světlý', icon: Icon.Sun },
     { key: 'dark', label: 'Tmavý', icon: Icon.Moon },
     { key: 'system', label: 'Systém', icon: Icon.Monitor },
   ];
+  const fileInputRef = useRef(null);
+  const [confirmImport, setConfirmImport] = useState(null); // parsed backup data pending confirmation
+  const [status, setStatus] = useState(null); // { type: 'success'|'error', text }
+
+  async function handleExport() {
+    try {
+      const machines = await db.getAll('machines');
+      const records = await db.getAll('records');
+      const payload = {
+        app: 'denik-udrzbare', version: APP_VERSION, exportedAt: new Date().toISOString(),
+        machines, records,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const dateStr = fmtDateKey(Date.now());
+      a.href = url;
+      a.download = `denik-udrzbare-zaloha-${dateStr}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setStatus({ type: 'success', text: 'Záloha byla stažena.' });
+    } catch (e) {
+      setStatus({ type: 'error', text: 'Export se nezdařil.' });
+    }
+  }
+
+  function triggerImport() {
+    fileInputRef.current?.click();
+  }
+
+  function onFileSelected(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!Array.isArray(data.machines) || !Array.isArray(data.records)) {
+          setStatus({ type: 'error', text: 'Soubor neobsahuje platnou zálohu.' });
+          return;
+        }
+        setConfirmImport(data);
+      } catch (e) {
+        setStatus({ type: 'error', text: 'Soubor se nepodařilo přečíst.' });
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  async function performImport() {
+    const data = confirmImport;
+    setConfirmImport(null);
+    try {
+      const existingMachines = await db.getAll('machines');
+      const existingRecords = await db.getAll('records');
+      for (const m of existingMachines) await db.delete('machines', m.id);
+      for (const r of existingRecords) await db.delete('records', r.id);
+      for (const m of data.machines) await db.put('machines', m);
+      for (const r of data.records) await db.put('records', r);
+      setStatus({ type: 'success', text: `Obnoveno: ${data.machines.length} strojů, ${data.records.length} záznamů.` });
+      onDataRestored?.();
+    } catch (e) {
+      setStatus({ type: 'error', text: 'Obnovení se nezdařilo.' });
+    }
+  }
+
   return (
     <div style={{ ...S.screen, background: theme.bg }}>
       <ModalHeader theme={theme} title="Nastavení" onBack={onBack} />
-      <div style={{ padding: '8px 20px' }}>
+      <div style={{ padding: '8px 20px', flex: 1, overflowY: 'auto' }}>
         <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Vzhled</div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
           {options.map(opt => {
@@ -412,13 +485,59 @@ function SettingsScreen({ theme, mode, setMode, onBack }) {
             );
           })}
         </div>
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Záloha dat</div>
+        <Card theme={theme} style={{ padding: '16px 18px', marginBottom: status ? 12 : 24 }}>
+          <div style={{ fontSize: 13, color: theme.textDim, lineHeight: 1.5, marginBottom: 14 }}>
+            Ulož si zálohu dat do souboru, nebo ji obnov na jiném zařízení.
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={handleExport} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`, borderRadius: 12, padding: '12px', color: theme.text, fontSize: 13.5, fontWeight: 600 }}>
+              <Icon.Download size={16} />
+              <span>Export</span>
+            </button>
+            <button onClick={triggerImport} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`, borderRadius: 12, padding: '12px', color: theme.text, fontSize: 13.5, fontWeight: 600 }}>
+              <Icon.Upload size={16} />
+              <span>Import</span>
+            </button>
+          </div>
+          <input ref={fileInputRef} type="file" accept="application/json" style={{ display: 'none' }} onChange={onFileSelected} />
+        </Card>
+
+        {status && (
+          <div style={{
+            fontSize: 12.5, color: status.type === 'error' ? theme.em : theme.cm,
+            background: status.type === 'error' ? theme.emSoft : theme.cmSoft,
+            border: `1px solid ${status.type === 'error' ? theme.em : theme.cm}33`,
+            borderRadius: 10, padding: '10px 13px', marginBottom: 24,
+          }}>
+            {status.text}
+          </div>
+        )}
+
         <div style={{ ...S.fieldLabel, color: theme.textFaint }}>O appce</div>
         <Card theme={theme} style={{ padding: '16px 18px' }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: theme.text, marginBottom: 3 }}>Deník údržbáře</div>
           <div style={{ fontSize: 13, color: theme.textFaint }}>Verze {APP_VERSION}</div>
           <div style={{ fontSize: 12.5, color: theme.textFaint, marginTop: 8, lineHeight: 1.5 }}>Data se ukládají pouze v tomto zařízení.</div>
         </Card>
+        <div style={{ height: 24 }} />
       </div>
+
+      {confirmImport && (
+        <div onClick={() => setConfirmImport(null)} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 50 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: theme.surfaceSolid, border: `1px solid ${theme.borderStrong}`, borderRadius: 20, padding: 22, width: '100%', maxWidth: 320, boxShadow: theme.shadow }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: theme.text, marginBottom: 4 }}>Nahradit všechna data?</div>
+            <div style={{ fontSize: 13, color: theme.textDim, marginBottom: 18, lineHeight: 1.5 }}>
+              Import smaže všechny současné stroje a záznamy ({confirmImport.machines.length} strojů, {confirmImport.records.length} záznamů v záloze) a nahradí je obsahem zálohy. Tato akce se nedá vrátit.
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setConfirmImport(null)} style={{ flex: 1, background: theme.surfaceElevated, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '12px', color: theme.text, fontWeight: 600 }}>Zrušit</button>
+              <button onClick={performImport} style={{ flex: 1, background: theme.em, border: 'none', borderRadius: 12, padding: '12px', color: '#fff', fontWeight: 700 }}>Nahradit</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -751,20 +870,23 @@ function YearScreen({ theme, db, onBack, onOpenMonth, onAddRecord, refreshTick, 
     records.forEach(r => {
       const [y, m] = r.date.split('-').map(Number);
       if (y !== year) return;
-      if (!map[m]) map[m] = { cm: 0, em: 0, emTime: 0 };
-      if (r.type === 'CM') map[m].cm++;
-      else {
+      if (!map[m]) map[m] = { cm: 0, cmOprava: 0, em: 0, emTime: 0 };
+      if (r.type === 'EM') {
         map[m].em++;
         map[m].emTime += r.downtimeMs ?? (r.endTime - r.startTime);
+      } else if (r.cmSubtype === 'oprava') {
+        map[m].cmOprava++;
+      } else {
+        map[m].cm++;
       }
     });
     return map;
   }, [records, year]);
 
   const yearStats = useMemo(() => {
-    let cm = 0, em = 0, emTime = 0;
-    Object.values(monthsInYear).forEach(m => { cm += m.cm; em += m.em; emTime += m.emTime; });
-    return { cm, em, emTime };
+    let cm = 0, cmOprava = 0, em = 0, emTime = 0;
+    Object.values(monthsInYear).forEach(m => { cm += m.cm; cmOprava += m.cmOprava; em += m.em; emTime += m.emTime; });
+    return { cm, cmOprava, em, emTime };
   }, [monthsInYear]);
 
   const availableYears = useMemo(() => {
@@ -795,18 +917,22 @@ function YearScreen({ theme, db, onBack, onOpenMonth, onAddRecord, refreshTick, 
         ><Icon.ChevronRight size={17} /></button>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, padding: '10px 20px 16px' }}>
-        <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
-          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.cm }}>{yearStats.cm}</div>
-          <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>CM</div>
+      <div style={{ display: 'flex', gap: 8, padding: '10px 20px 16px' }}>
+        <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
+          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.cm }}>{yearStats.cm}</div>
+          <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>CM</div>
         </Card>
-        <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
-          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.em }}>{yearStats.em}</div>
-          <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>EM</div>
+        <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
+          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.cmAlt }}>{yearStats.cmOprava}</div>
+          <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>CM Oprava</div>
         </Card>
-        <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
-          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.text }}>{fmtDurationMin(yearStats.emTime)}</div>
-          <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>prostoje</div>
+        <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
+          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.em }}>{yearStats.em}</div>
+          <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>EM</div>
+        </Card>
+        <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
+          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.text }}>{fmtDurationMin(yearStats.emTime)}</div>
+          <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>prostoje</div>
         </Card>
       </div>
 
@@ -1062,6 +1188,76 @@ function fmtInputTime(ts) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// Otevře systémový sdílecí dialog (na mobilu obvykle nabídne přímo uložení
+// do Fotky/Galerie jako jednu z možností, spolu s WhatsApp/e-mail/atd.).
+// Vrací false, pokud sdílení není v tomto prohlížeči dostupné vůbec.
+async function sharePhoto(dataUrl, record, index) {
+  const dateKey = record?.date || fmtDateKey(Date.now());
+  const machineSlug = (record?.machineName || 'stroj').replace(/[^a-zA-Z0-9á-žÁ-Ž]+/g, '-').slice(0, 40);
+  const filename = `${machineSlug}-${dateKey}-${index + 1}.jpg`;
+
+  try {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const file = new File([blob], filename, { type: blob.type || 'image/jpeg' });
+    if (!navigator.canShare || !navigator.canShare({ files: [file] })) return false;
+    await navigator.share({ files: [file] });
+    return true;
+  } catch (e) {
+    // Uživatel zrušil sdílecí dialog — to není chyba, appka zůstává v detailu.
+    return false;
+  }
+}
+
+// Stáhne fotku jako běžný soubor (do Downloads / vyžádá umístění podle prohlížeče).
+async function downloadPhoto(dataUrl, record, index) {
+  const dateKey = record?.date || fmtDateKey(Date.now());
+  const machineSlug = (record?.machineName || 'stroj').replace(/[^a-zA-Z0-9á-žÁ-Ž]+/g, '-').slice(0, 40);
+  const filename = `${machineSlug}-${dateKey}-${index + 1}.jpg`;
+
+  try {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Zkopíruje fotku do schránky, aby šla rovnou vložit (Vložit / dlouhý stisk)
+// do zprávy, e-mailu nebo dokumentu. Clipboard API pro obrázky spolehlivě
+// podporuje jen image/png napříč prohlížeči, takže fotku (často JPEG z
+// fotoaparátu) nejdřív překreslíme na canvas a exportujeme jako PNG.
+async function copyPhotoToClipboard(dataUrl) {
+  if (!navigator.clipboard || !window.ClipboardItem) return false;
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = dataUrl;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext('2d').drawImage(img, 0, 0);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) return false;
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // ============================================================
 // DATE PICKER SCREEN — výběr konkrétního dne před výběrem stroje
 // (používá se při přidávání opravy z přehledu Roku nebo Měsíce)
@@ -1148,6 +1344,8 @@ function TimeEditor({ theme, label, value, onChange, isDark }) {
 function RecordDetail({ theme, db, record, onBack, onDelete, onUpdated, resolvedThemeName }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(null); // index into view.photos, or null when closed
+  const [copyFeedback, setCopyFeedback] = useState(false); // brief "Zkopírováno" confirmation after copy
 
   // Draft fields used only while editing
   const [draft, setDraft] = useState(() => ({ ...record }));
@@ -1383,7 +1581,12 @@ function RecordDetail({ theme, db, record, onBack, onDelete, onUpdated, resolved
               <>
                 <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Fotky</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                  {view.photos.map((p, i) => <img key={i} src={p} style={{ width: 100, height: 100, borderRadius: 14, objectFit: 'cover', border: `1px solid ${theme.border}` }} />)}
+                  {view.photos.map((p, i) => (
+                    <img
+                      key={i} src={p} onClick={() => setLightboxIndex(i)}
+                      style={{ width: 100, height: 100, borderRadius: 14, objectFit: 'cover', border: `1px solid ${theme.border}`, cursor: 'pointer' }}
+                    />
+                  ))}
                 </div>
               </>
             )}
@@ -1419,6 +1622,74 @@ function RecordDetail({ theme, db, record, onBack, onDelete, onUpdated, resolved
               <button onClick={() => onDelete(record.id)} style={{ flex: 1, background: theme.em, border: 'none', borderRadius: 12, padding: '12px', color: '#fff', fontWeight: 700 }}>Smazat</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {lightboxIndex !== null && view.photos?.[lightboxIndex] && (
+        <div
+          onClick={() => setLightboxIndex(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }}
+        >
+          <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: 8, zIndex: 2 }} onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={async () => { await sharePhoto(view.photos[lightboxIndex], record, lightboxIndex); }}
+              style={{ width: 42, height: 42, borderRadius: 12, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+            >
+              <Icon.ShareIcon size={19} />
+            </button>
+            <button
+              onClick={async () => {
+                const ok = await copyPhotoToClipboard(view.photos[lightboxIndex]);
+                if (ok) { setCopyFeedback(true); setTimeout(() => setCopyFeedback(false), 1800); }
+              }}
+              style={{ width: 42, height: 42, borderRadius: 12, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+            >
+              <Icon.Copy size={19} />
+            </button>
+            <button
+              onClick={async () => { await downloadPhoto(view.photos[lightboxIndex], record, lightboxIndex); }}
+              style={{ width: 42, height: 42, borderRadius: 12, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+            >
+              <Icon.Download size={19} />
+            </button>
+            <button
+              onClick={() => setLightboxIndex(null)}
+              style={{ width: 42, height: 42, borderRadius: 12, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+            >
+              <Icon.X size={20} weight="bold" />
+            </button>
+          </div>
+          {copyFeedback && (
+            <div style={{ position: 'absolute', top: 68, right: 16, fontSize: 12.5, fontWeight: 600, color: '#fff', background: 'rgba(0,0,0,0.75)', padding: '7px 12px', borderRadius: 10, zIndex: 2 }}>
+              Zkopírováno do schránky
+            </div>
+          )}
+          {view.photos.length > 1 && (
+            <div style={{ position: 'absolute', top: 16, left: 16, fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.8)', background: 'rgba(255,255,255,0.1)', padding: '6px 12px', borderRadius: 20 }}>
+              {lightboxIndex + 1} / {view.photos.length}
+            </div>
+          )}
+          {view.photos.length > 1 && lightboxIndex > 0 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setLightboxIndex(i => i - 1); }}
+              style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', zIndex: 2 }}
+            >
+              <Icon.Back size={20} />
+            </button>
+          )}
+          {view.photos.length > 1 && lightboxIndex < view.photos.length - 1 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setLightboxIndex(i => i + 1); }}
+              style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', zIndex: 2 }}
+            >
+              <Icon.ChevronRight size={20} />
+            </button>
+          )}
+          <img
+            src={view.photos[lightboxIndex]}
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '92vw', maxHeight: '86vh', objectFit: 'contain', borderRadius: 8 }}
+          />
         </div>
       )}
     </div>
@@ -1496,6 +1767,11 @@ function App() {
   }
 
   function resetToHome() { setStack([{ screen: 'home' }]); }
+
+  function handleDataRestored() {
+    setRefreshTick(t => t + 1);
+    setActiveSession(null);
+  }
 
   async function handleSetMode(newMode) {
     setMode(newMode);
@@ -1616,7 +1892,7 @@ function App() {
           />
         )}
         {route.screen === 'machines' && <MachinesScreen theme={theme} />}
-        {route.screen === 'settings' && <SettingsScreen theme={theme} mode={mode} setMode={handleSetMode} onBack={() => pop(1)} />}
+        {route.screen === 'settings' && <SettingsScreen theme={theme} mode={mode} setMode={handleSetMode} onBack={() => pop(1)} db={db} onDataRestored={handleDataRestored} />}
         {route.screen === 'datePicker' && (
           <DatePickerScreen
             theme={theme}
