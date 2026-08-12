@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '4.8';
+const APP_VERSION = '4.11';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -216,6 +216,7 @@ const Icon = {
   Upload: phosphorIcon('upload-simple'),
   Copy: phosphorIcon('copy'),
   ShareIcon: phosphorIcon('share-network'),
+  House: phosphorIcon('house'),
 };
 
 // ============================================================
@@ -322,13 +323,26 @@ function Card({ theme, children, style }) {
   );
 }
 
-function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onOpenToday }) {
+function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onOpenToday, onAddPhoto }) {
   const elapsed = useElapsed(activeSession?.startTime, !!activeSession);
   const now = useNow();
   const [pressed, setPressed] = useState(false);
   const accentColor = activeSession ? theme.em : theme.primary;
   const accentSoft = activeSession ? theme.emSoft : theme.primarySoft;
   const nowDate = new Date(now);
+  const cameraInputRef = useRef(null);
+  const galleryInputRef = useRef(null);
+  const photoCount = activeSession?.photos?.length || 0;
+
+  function handleSessionFiles(e) {
+    const files = Array.from(e.target.files || []);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => onAddPhoto(reader.result);
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  }
 
   return (
     <div style={{ ...S.screen, background: theme.bg }}>
@@ -384,10 +398,33 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
         </div>
       </div>
 
-      <button style={{ ...S.historyLink, color: theme.textDim }} onClick={onOpenToday}>
-        <span>Dnešní opravy</span>
-        <Icon.ChevronRight size={17} />
-      </button>
+      {activeSession ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '22px' }}>
+          <button
+            onClick={() => cameraInputRef.current?.click()}
+            style={{ width: 42, height: 42, borderRadius: 12, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim, backdropFilter: theme.blur, flexShrink: 0 }}
+          >
+            <Icon.Camera size={18} />
+          </button>
+          <button style={{ ...S.historyLink, color: theme.textDim, padding: '0 4px' }} onClick={onOpenToday}>
+            <span>Dnešní opravy{photoCount > 0 ? ` · ${photoCount} 📷` : ''}</span>
+            <Icon.ChevronRight size={17} />
+          </button>
+          <button
+            onClick={() => galleryInputRef.current?.click()}
+            style={{ width: 42, height: 42, borderRadius: 12, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim, backdropFilter: theme.blur, flexShrink: 0 }}
+          >
+            <Icon.Image size={18} />
+          </button>
+          <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleSessionFiles} />
+          <input ref={galleryInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleSessionFiles} />
+        </div>
+      ) : (
+        <button style={{ ...S.historyLink, color: theme.textDim }} onClick={onOpenToday}>
+          <span>Dnešní opravy</span>
+          <Icon.ChevronRight size={17} />
+        </button>
+      )}
     </div>
   );
 }
@@ -542,10 +579,13 @@ function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored }) {
   );
 }
 
-function ModalHeader({ theme, title, onBack, onAction, actionIcon: ActionIcon, actionVariant }) {
+function ModalHeader({ theme, title, onBack, onHome, onAction, actionIcon: ActionIcon, actionVariant }) {
   return (
     <div style={{ ...S.modalHeader, borderBottom: `1px solid ${theme.border}` }}>
-      {onBack ? <IconButton theme={theme} onClick={onBack}><Icon.Back size={19} /></IconButton> : <div style={{ width: 42 }} />}
+      <div style={{ display: 'flex', gap: 8 }}>
+        {onBack ? <IconButton theme={theme} onClick={onBack}><Icon.Back size={19} /></IconButton> : <div style={{ width: 42 }} />}
+        {onHome && <IconButton theme={theme} onClick={onHome}><Icon.House size={18} /></IconButton>}
+      </div>
       <span style={{ ...S.modalTitle, color: theme.text }}>{title}</span>
       {ActionIcon ? <IconButton theme={theme} onClick={onAction} variant={actionVariant}><ActionIcon size={18} /></IconButton> : <div style={{ width: 42 }} />}
     </div>
@@ -660,7 +700,7 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
   const [wo, setWo] = useState('');
   const [issue, setIssue] = useState('');
   const [solution, setSolution] = useState('');
-  const [photos, setPhotos] = useState([]);
+  const [photos, setPhotos] = useState(() => session?.photos || []);
   const fileInputRef = useRef(null);
   const galleryInputRef = useRef(null);
 
@@ -739,7 +779,7 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
             <TimeEditor theme={theme} label="Od" value={startTime} onChange={setStartTime} isDark={resolvedThemeName === 'dark'} />
             <TimeEditor theme={theme} label="Do" value={endTime} onChange={setEndTime} isDark={resolvedThemeName === 'dark'} />
           </div>
-          <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 10 }}>doba na místě {fmtDurationMin(actualDuration)}</div>
+          <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 10 }}>doba na místě {fmtDurationShort(actualDuration)}</div>
         </Card>
 
         <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Typ</div>
@@ -793,7 +833,7 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
                 </div>
                 <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 8 }}>délka prostoje: {fmtDurationMin(effectiveDowntime)}</div>
                 <button onClick={() => { setEditingDowntime(false); setDowntimeTouched(false); setDowntimeStart(startTime); setDowntimeEnd(endTime); }} style={{ marginTop: 8, fontSize: 13, color: theme.textFaint }}>
-                  Zpět na dobu opravy ({fmtDurationMin(actualDuration)})
+                  Zpět na dobu opravy ({fmtDurationShort(actualDuration)})
                 </button>
               </div>
             ) : (
@@ -854,7 +894,7 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
 // ============================================================
 // YEAR SCREEN — dlaždice měsíců s počty a časem prostojů
 // ============================================================
-function YearScreen({ theme, db, onBack, onOpenMonth, onAddRecord, refreshTick, initialYear }) {
+function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, refreshTick, initialYear }) {
   const [records, setRecords] = useState([]);
   const [year, setYear] = useState(initialYear || new Date().getFullYear());
 
@@ -897,7 +937,7 @@ function YearScreen({ theme, db, onBack, onOpenMonth, onAddRecord, refreshTick, 
 
   return (
     <div style={{ ...S.screen, background: theme.bg }}>
-      <ModalHeader theme={theme} title="Přehled" onBack={onBack} onAction={() => onAddRecord(fmtDateKey(Date.now()))} actionIcon={Icon.Plus} />
+      <ModalHeader theme={theme} title="Přehled" onBack={onBack} onHome={onHome} onAction={() => onAddRecord(fmtDateKey(Date.now()))} actionIcon={Icon.Plus} />
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '14px 20px 4px' }}>
         <button
@@ -976,7 +1016,7 @@ function YearScreen({ theme, db, onBack, onOpenMonth, onAddRecord, refreshTick, 
 // ============================================================
 // MONTH SCREEN — dny v měsíci s opravami
 // ============================================================
-function MonthScreen({ theme, db, monthKey, onBack, onOpenDay, onAddRecord, refreshTick }) {
+function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddRecord, refreshTick }) {
   const [records, setRecords] = useState([]);
 
   const load = useCallback(async () => {
@@ -1036,7 +1076,7 @@ function MonthScreen({ theme, db, monthKey, onBack, onOpenDay, onAddRecord, refr
 
   return (
     <div style={{ ...S.screen, background: theme.bg }}>
-      <ModalHeader theme={theme} title={fmtMonthLabel(monthKey)} onBack={onBack} onAction={() => onAddRecord(defaultDateForMonth())} actionIcon={Icon.Plus} />
+      <ModalHeader theme={theme} title={fmtMonthLabel(monthKey)} onBack={onBack} onHome={onHome} onAction={() => onAddRecord(defaultDateForMonth())} actionIcon={Icon.Plus} />
 
       <div style={{ display: 'flex', gap: 10, padding: '16px 20px 12px' }}>
         <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
@@ -1105,7 +1145,7 @@ function MonthScreen({ theme, db, monthKey, onBack, onOpenDay, onAddRecord, refr
 // ============================================================
 // DAY SCREEN — jednotlivé záznamy daného dne
 // ============================================================
-function DayScreen({ theme, db, dateKey, onBack, onOpenRecord, onAddRecord, refreshTick }) {
+function DayScreen({ theme, db, dateKey, onBack, onHome, onOpenRecord, onAddRecord, refreshTick }) {
   const [records, setRecords] = useState([]);
 
   const load = useCallback(async () => {
@@ -1118,7 +1158,7 @@ function DayScreen({ theme, db, dateKey, onBack, onOpenRecord, onAddRecord, refr
 
   return (
     <div style={{ ...S.screen, background: theme.bg }}>
-      <ModalHeader theme={theme} title={fmtDateLabel(dateKey)} onBack={onBack} onAction={() => onAddRecord(dateKey)} actionIcon={Icon.Plus} />
+      <ModalHeader theme={theme} title={fmtDateLabel(dateKey)} onBack={onBack} onHome={onHome} onAction={() => onAddRecord(dateKey)} actionIcon={Icon.Plus} />
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
         {records.length === 0 && (
           <div style={{ textAlign: 'center', padding: '48px 20px' }}>
@@ -1258,6 +1298,43 @@ async function copyPhotoToClipboard(dataUrl) {
   }
 }
 
+// Zkopíruje text do schránky. Nejdřív zkusí moderní Clipboard API; pokud to
+// selže (starší mobilní prohlížeče to občas odmítnou i v secure contextu),
+// spadne na osvědčený trik s dočasným textarea + execCommand('copy'), který
+// funguje mnohem šířeji. Volitelný setFeedback callback dostane true/false.
+async function copyTextToClipboard(text, setFeedback) {
+  let ok = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    }
+  } catch (e) {
+    ok = false;
+  }
+  if (!ok) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+    } catch (e) {
+      ok = false;
+    }
+  }
+  if (setFeedback) {
+    setFeedback(ok);
+    if (ok) setTimeout(() => setFeedback(false), 1800);
+  }
+  return ok;
+}
+
 // ============================================================
 // DATE PICKER SCREEN — výběr konkrétního dne před výběrem stroje
 // (používá se při přidávání opravy z přehledu Roku nebo Měsíce)
@@ -1341,11 +1418,13 @@ function TimeEditor({ theme, label, value, onChange, isDark }) {
 // ============================================================
 // RECORD DETAIL — needitovatelné zobrazení + přepnutí na editaci
 // ============================================================
-function RecordDetail({ theme, db, record, onBack, onDelete, onUpdated, resolvedThemeName }) {
+function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, resolvedThemeName }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(null); // index into view.photos, or null when closed
   const [copyFeedback, setCopyFeedback] = useState(false); // brief "Zkopírováno" confirmation after copy
+  const [solutionCopied, setSolutionCopied] = useState(false); // brief confirmation after copying solution text
+  const [showMachinePicker, setShowMachinePicker] = useState(false); // overlay for changing the machine while editing
 
   // Draft fields used only while editing
   const [draft, setDraft] = useState(() => ({ ...record }));
@@ -1417,6 +1496,7 @@ function RecordDetail({ theme, db, record, onBack, onDelete, onUpdated, resolved
         theme={theme}
         title={editing ? 'Upravit záznam' : 'Detail záznamu'}
         onBack={editing ? cancelEdits : onBack}
+        onHome={editing ? undefined : onHome}
         onAction={editing ? undefined : () => setConfirmDelete(true)}
         actionIcon={editing ? undefined : Icon.Trash}
         actionVariant="danger"
@@ -1425,7 +1505,17 @@ function RecordDetail({ theme, db, record, onBack, onDelete, onUpdated, resolved
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
         <Card theme={theme} style={{ padding: 18, marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: editing ? 12 : 14 }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: theme.text }}>{view.machineName}</div>
+            {editing ? (
+              <button
+                onClick={() => setShowMachinePicker(true)}
+                style={{ display: 'flex', alignItems: 'center', gap: 7, background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`, borderRadius: 10, padding: '8px 12px', color: theme.primary }}
+              >
+                <span style={{ fontSize: 16, fontWeight: 700, color: theme.text }}>{draft.machineName}</span>
+                <Icon.Edit size={13} />
+              </button>
+            ) : (
+              <div style={{ fontSize: 18, fontWeight: 700, color: theme.text }}>{view.machineName}</div>
+            )}
             {!editing && (
               <span style={{ display: 'inline-block', padding: '5px 12px', borderRadius: 9, fontSize: 12, fontWeight: 700, color, background: soft, whiteSpace: 'nowrap' }}>
                 {view.type} · {view.type === 'CM' ? CM_SUBTYPES[view.cmSubtype || 'normal'].label : TYPES.EM.full}
@@ -1434,16 +1524,23 @@ function RecordDetail({ theme, db, record, onBack, onDelete, onUpdated, resolved
           </div>
 
           {editing ? (
-            <div style={{ display: 'flex', gap: 10 }}>
-              <TimeEditor theme={theme} label="Od" value={draft.startTime} onChange={v => updateDraft({ startTime: v })} isDark={resolvedThemeName === 'dark'} />
-              <TimeEditor theme={theme} label="Do" value={draft.endTime} onChange={v => updateDraft({ endTime: v })} isDark={resolvedThemeName === 'dark'} />
+            <div>
+              <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: theme.textFaint, marginBottom: 6 }}>
+                {draft.type === 'CM' && draft.cmSubtype !== 'oprava' ? 'Práce' : 'Oprava'}
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <TimeEditor theme={theme} label="Od" value={draft.startTime} onChange={v => updateDraft({ startTime: v })} isDark={resolvedThemeName === 'dark'} />
+                <TimeEditor theme={theme} label="Do" value={draft.endTime} onChange={v => updateDraft({ endTime: v })} isDark={resolvedThemeName === 'dark'} />
+              </div>
             </div>
           ) : (
             <div style={{ display: 'flex', gap: 10 }}>
               <div style={{ flex: 1, background: theme.bgSubtle, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '11px 13px' }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: theme.textFaint, marginBottom: 4 }}>{fmtDateLabel(view.date)}</div>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: theme.textFaint, marginBottom: 4 }}>
+                  {view.type === 'CM' && view.cmSubtype !== 'oprava' ? 'Práce' : 'Oprava'}
+                </div>
                 <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 16, fontWeight: 700, color: theme.text }}>{fmtTime(view.startTime)}–{fmtTime(view.endTime)}</div>
-                <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>doba opravy · {fmtDurationMin(actualDuration)}</div>
+                <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>{fmtDurationShort(actualDuration)}</div>
               </div>
               {view.type === 'EM' && (view.downtimeStart != null && view.downtimeEnd != null) && (
                 <div style={{ flex: 1, background: theme.emSoft, border: `1px solid ${theme.em}33`, borderRadius: 12, padding: '11px 13px' }}>
@@ -1509,7 +1606,7 @@ function RecordDetail({ theme, db, record, onBack, onDelete, onUpdated, resolved
                     </div>
                     <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 8 }}>délka prostoje: {fmtDurationMin(Math.max(0, downtimeEnd - downtimeStart))}</div>
                     <button onClick={() => { setEditingDowntime(false); setDowntimeTouched(false); setDowntimeStart(draft.startTime); setDowntimeEnd(draft.endTime); }} style={{ marginTop: 8, fontSize: 13, color: theme.textFaint }}>
-                      Zpět na dobu opravy ({fmtDurationMin(actualDuration)})
+                      Zpět na dobu opravy ({fmtDurationShort(actualDuration)})
                     </button>
                   </div>
                 ) : (
@@ -1572,8 +1669,20 @@ function RecordDetail({ theme, db, record, onBack, onDelete, onUpdated, resolved
             {view.solution && (
               <div style={{ marginBottom: 26 }}>
                 <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: theme.textFaint, marginBottom: 8 }}>Řešení</div>
-                <div style={{ background: theme.bgSubtle, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '13px 16px' }}>
-                  <div style={{ fontSize: 14.5, fontWeight: 500, color: theme.text, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{view.solution}</div>
+                <div style={{ position: 'relative', background: theme.bgSubtle, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '13px 16px' }}>
+                  <button
+                    onClick={() => copyTextToClipboard(view.solution, setSolutionCopied)}
+                    style={{
+                      position: 'absolute', top: 10, right: 10, width: 30, height: 30, borderRadius: 8,
+                      background: solutionCopied ? theme.cmSoft : theme.surfaceElevated,
+                      border: `1px solid ${solutionCopied ? theme.cm : theme.border}`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: solutionCopied ? theme.cm : theme.textDim,
+                    }}
+                  >
+                    {solutionCopied ? <Icon.Check size={14} weight="bold" /> : <Icon.Copy size={14} />}
+                  </button>
+                  <div style={{ fontSize: 14.5, fontWeight: 500, color: theme.text, lineHeight: 1.5, whiteSpace: 'pre-wrap', paddingRight: 34 }}>{view.solution}</div>
                 </div>
               </div>
             )}
@@ -1692,6 +1801,20 @@ function RecordDetail({ theme, db, record, onBack, onDelete, onUpdated, resolved
           />
         </div>
       )}
+
+      {showMachinePicker && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 70, background: theme.bg }}>
+          <MachinePicker
+            theme={theme}
+            db={db}
+            onPick={(machine) => {
+              updateDraft({ machineId: machine.id, machineName: machine.name });
+              setShowMachinePicker(false);
+            }}
+            onCancel={() => setShowMachinePicker(false)}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -1779,14 +1902,23 @@ function App() {
   }
 
   async function startTimer() {
-    const session = { id: 'active', startTime: Date.now() };
+    const session = { id: 'active', startTime: Date.now(), photos: [] };
     await db.put('activeSession', session);
     setActiveSession(session);
   }
 
+  // Přidá fotku pořízenou/vybranou během běžícího timeru rovnou do activeSession
+  // v IndexedDB, takže přežije zavření appky stejně spolehlivě jako čas.
+  async function addSessionPhoto(dataUrl) {
+    if (!activeSession) return;
+    const updated = { ...activeSession, photos: [...(activeSession.photos || []), dataUrl] };
+    await db.put('activeSession', updated);
+    setActiveSession(updated);
+  }
+
   async function stopTimer() {
     const endTime = Date.now();
-    setPendingSession({ startTime: activeSession.startTime, endTime });
+    setPendingSession({ startTime: activeSession.startTime, endTime, photos: activeSession.photos || [] });
     await db.delete('activeSession', 'active');
     setActiveSession(null);
     push('pickMachine');
@@ -1889,6 +2021,7 @@ function App() {
             onStop={stopTimer}
             onOpenSettings={() => push('settings')}
             onOpenToday={goToTodayInHistory}
+            onAddPhoto={addSessionPhoto}
           />
         )}
         {route.screen === 'machines' && <MachinesScreen theme={theme} />}
@@ -1921,16 +2054,16 @@ function App() {
           />
         )}
         {route.screen === 'year' && (
-          <YearScreen theme={theme} db={db} onBack={atRoot ? undefined : () => pop(1)} onOpenMonth={(monthKey) => push('month', { monthKey })} onAddRecord={startBackfillWithPicker} refreshTick={refreshTick} />
+          <YearScreen theme={theme} db={db} onBack={atRoot ? undefined : () => pop(1)} onHome={() => switchTab('timer')} onOpenMonth={(monthKey) => push('month', { monthKey })} onAddRecord={startBackfillWithPicker} refreshTick={refreshTick} />
         )}
         {route.screen === 'month' && (
-          <MonthScreen theme={theme} db={db} monthKey={route.monthKey} onBack={() => pop(1)} onOpenDay={(dateKey) => push('day', { dateKey })} onAddRecord={startBackfillWithPicker} refreshTick={refreshTick} />
+          <MonthScreen theme={theme} db={db} monthKey={route.monthKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenDay={(dateKey) => push('day', { dateKey })} onAddRecord={startBackfillWithPicker} refreshTick={refreshTick} />
         )}
         {route.screen === 'day' && (
-          <DayScreen theme={theme} db={db} dateKey={route.dateKey} onBack={() => pop(1)} onOpenRecord={(r) => push('recordDetail', { record: r })} onAddRecord={startBackfill} refreshTick={refreshTick} />
+          <DayScreen theme={theme} db={db} dateKey={route.dateKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenRecord={(r) => push('recordDetail', { record: r })} onAddRecord={startBackfill} refreshTick={refreshTick} />
         )}
         {route.screen === 'recordDetail' && (
-          <RecordDetail theme={theme} db={db} record={route.record} onBack={() => pop(1)} onDelete={deleteRecord} onUpdated={onRecordUpdated} resolvedThemeName={resolvedThemeName} />
+          <RecordDetail theme={theme} db={db} record={route.record} onBack={() => pop(1)} onHome={() => switchTab('timer')} onDelete={deleteRecord} onUpdated={onRecordUpdated} resolvedThemeName={resolvedThemeName} />
         )}
       </div>
       {atRoot && (
