@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '4.11';
+const APP_VERSION = '5.4';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -336,11 +336,16 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
 
   function handleSessionFiles(e) {
     const files = Array.from(e.target.files || []);
-    files.forEach(file => {
+    if (files.length === 0) return;
+    // Read all files first, then hand them to onAddPhoto together — reading
+    // one-by-one and calling onAddPhoto per file would race against the
+    // in-memory activeSession closure and silently drop all but the last photo.
+    Promise.all(files.map(file => new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => onAddPhoto(reader.result);
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
       reader.readAsDataURL(file);
-    });
+    }))).then(dataUrls => onAddPhoto(dataUrls));
     e.target.value = '';
   }
 
@@ -356,6 +361,11 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
           </div>
           <IconButton theme={theme} onClick={onOpenSettings}><Icon.Settings size={19} /></IconButton>
         </div>
+        {activeSession && (
+          <div style={{ fontSize: 12, color: theme.textFaint, textAlign: 'center', marginTop: 14 }}>
+            Klidně appku zavři, čas běží dál na pozadí
+          </div>
+        )}
       </div>
 
       <div style={S.timerWrap}>
@@ -388,7 +398,6 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
             <>
               <div style={{ ...S.timerLabel, color: theme.em }}>PRÁCE PROBÍHÁ OD {fmtTime(activeSession.startTime)}</div>
               <div style={{ ...S.timerDisplay, color: theme.text, marginTop: 6, marginBottom: 0 }}>{fmtDuration(elapsed)}</div>
-              <div style={{ ...S.pulseHint, color: theme.textFaint, marginTop: 14 }}>Klidně appku zavři, čas běží dál na pozadí</div>
             </>
           ) : (
             <div style={{ fontSize: 14, color: theme.textFaint, textAlign: 'center', maxWidth: 240, lineHeight: 1.5 }}>
@@ -399,25 +408,45 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
       </div>
 
       {activeSession ? (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '22px' }}>
-          <button
-            onClick={() => cameraInputRef.current?.click()}
-            style={{ width: 42, height: 42, borderRadius: 12, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim, backdropFilter: theme.blur, flexShrink: 0 }}
-          >
-            <Icon.Camera size={18} />
-          </button>
-          <button style={{ ...S.historyLink, color: theme.textDim, padding: '0 4px' }} onClick={onOpenToday}>
-            <span>Dnešní opravy{photoCount > 0 ? ` · ${photoCount} 📷` : ''}</span>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '10px 22px 22px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: 196 }}>
+            <button
+              onClick={() => cameraInputRef.current?.click()}
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', border: 'none' }}
+            >
+              <div style={{ width: 50, height: 50, borderRadius: 14, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim, backdropFilter: theme.blur }}>
+                <Icon.Camera size={20} />
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, color: theme.textFaint }}>Foto</span>
+            </button>
+            {photoCount > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                <div style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontSize: 18, lineHeight: 1 }}>📷</span>
+                  <span style={{
+                    position: 'absolute', top: -6, right: -8, minWidth: 15, height: 15, borderRadius: 8, padding: '0 3px',
+                    background: theme.primary, color: '#fff', fontSize: 9.5, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+                  }}>{photoCount}</span>
+                </div>
+              </div>
+            )}
+            <button
+              onClick={() => galleryInputRef.current?.click()}
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', border: 'none' }}
+            >
+              <div style={{ width: 50, height: 50, borderRadius: 14, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim, backdropFilter: theme.blur }}>
+                <Icon.Image size={20} />
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, color: theme.textFaint }}>Galerie</span>
+            </button>
+            <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleSessionFiles} />
+            <input ref={galleryInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleSessionFiles} />
+          </div>
+          <button style={{ ...S.historyLink, color: theme.textDim, padding: '0' }} onClick={onOpenToday}>
+            <span>Dnešní opravy</span>
             <Icon.ChevronRight size={17} />
           </button>
-          <button
-            onClick={() => galleryInputRef.current?.click()}
-            style={{ width: 42, height: 42, borderRadius: 12, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim, backdropFilter: theme.blur, flexShrink: 0 }}
-          >
-            <Icon.Image size={18} />
-          </button>
-          <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleSessionFiles} />
-          <input ref={galleryInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleSessionFiles} />
         </div>
       ) : (
         <button style={{ ...S.historyLink, color: theme.textDim }} onClick={onOpenToday}>
@@ -740,11 +769,13 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
 
   function handleFiles(e) {
     const files = Array.from(e.target.files || []);
-    files.forEach(file => {
+    if (files.length === 0) return;
+    Promise.all(files.map(file => new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => setPhotos(prev => [...prev, reader.result]);
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
       reader.readAsDataURL(file);
-    });
+    }))).then(dataUrls => setPhotos(prev => [...prev, ...dataUrls]));
     e.target.value = '';
   }
 
@@ -1478,10 +1509,14 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
 
   function handleFiles(e) {
     const files = Array.from(e.target.files || []);
-    files.forEach(file => {
+    if (files.length === 0) return;
+    Promise.all(files.map(file => new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => updateDraft({ photos: [...(draft.photos || []), reader.result] });
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
       reader.readAsDataURL(file);
+    }))).then(dataUrls => {
+      setDraft(d => ({ ...d, photos: [...(d.photos || []), ...dataUrls] }));
     });
     e.target.value = '';
   }
@@ -1843,6 +1878,7 @@ function App() {
   const [activeSession, setActiveSession] = useState(null);
   const [pendingSession, setPendingSession] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [galleryColumns, setGalleryColumns] = useState(3);
   const stackRef = useRef(stack);
   stackRef.current = stack;
   const { mode, setMode, theme, resolvedName: resolvedThemeName } = useTheme();
@@ -1857,6 +1893,8 @@ function App() {
       if (sessions.length > 0) setActiveSession(sessions[0]);
       const settings = await database.get('settings', 'theme');
       if (settings?.mode) setMode(settings.mode);
+      const gallerySettings = await database.get('settings', 'gallery').catch(() => null);
+      if (gallerySettings?.columns) setGalleryColumns(gallerySettings.columns);
     });
   }, []);
 
@@ -1901,17 +1939,25 @@ function App() {
     if (db) await db.put('settings', { id: 'theme', mode: newMode });
   }
 
+  async function handleGalleryColumnsChange(cols) {
+    setGalleryColumns(cols);
+    if (db) await db.put('settings', { id: 'gallery', columns: cols });
+  }
+
   async function startTimer() {
     const session = { id: 'active', startTime: Date.now(), photos: [] };
     await db.put('activeSession', session);
     setActiveSession(session);
   }
 
-  // Přidá fotku pořízenou/vybranou během běžícího timeru rovnou do activeSession
-  // v IndexedDB, takže přežije zavření appky stejně spolehlivě jako čas.
-  async function addSessionPhoto(dataUrl) {
+  // Přidá jednu nebo více fotek pořízených/vybraných během běžícího timeru rovnou
+  // do activeSession v IndexedDB, takže přežijí zavření appky stejně spolehlivě
+  // jako čas. Vždy dostane pole (i pro jednu fotku), ať se víc fotek vybraných
+  // najednou nepřepisovalo kvůli zastaralé closure hodnotě activeSession.
+  async function addSessionPhoto(dataUrls) {
     if (!activeSession) return;
-    const updated = { ...activeSession, photos: [...(activeSession.photos || []), dataUrl] };
+    const newPhotos = Array.isArray(dataUrls) ? dataUrls : [dataUrls];
+    const updated = { ...activeSession, photos: [...(activeSession.photos || []), ...newPhotos] };
     await db.put('activeSession', updated);
     setActiveSession(updated);
   }
@@ -2003,7 +2049,11 @@ function App() {
 
   function switchTab(tab) {
     setActiveTab(tab);
-    const rootEntry = tab === 'history' ? { screen: 'year' } : tab === 'machines' ? { screen: 'machines' } : { screen: 'home' };
+    const rootEntry =
+      tab === 'history' ? { screen: 'year' } :
+      tab === 'machines' ? { screen: 'machines' } :
+      tab === 'gallery' ? { screen: 'gallery' } :
+      { screen: 'home' };
     // Collapse browser history back to a single depth-1 entry so hardware/gesture
     // back behaves like "leave the app" from any tab's root, consistent with push/pop.
     window.history.replaceState({ depth: 1 }, '');
@@ -2025,6 +2075,13 @@ function App() {
           />
         )}
         {route.screen === 'machines' && <MachinesScreen theme={theme} />}
+        {route.screen === 'gallery' && (
+          <GalleryScreen
+            theme={theme} db={db} refreshTick={refreshTick}
+            onOpenRecord={(r) => push('recordDetail', { record: r, fromGallery: true })}
+            columns={galleryColumns} onColumnsChange={handleGalleryColumnsChange}
+          />
+        )}
         {route.screen === 'settings' && <SettingsScreen theme={theme} mode={mode} setMode={handleSetMode} onBack={() => pop(1)} db={db} onDataRestored={handleDataRestored} />}
         {route.screen === 'datePicker' && (
           <DatePickerScreen
@@ -2078,6 +2135,7 @@ function TabBar({ theme, activeTab, onSwitch }) {
     { key: 'timer', label: 'Timer', icon: Icon.Clock },
     { key: 'history', label: 'Historie', icon: Icon.Calendar },
     { key: 'machines', label: 'Stroje', icon: Icon.Wrench },
+    { key: 'gallery', label: 'Galerie', icon: Icon.Image },
   ];
   return (
     <div style={{
@@ -2116,6 +2174,412 @@ function MachinesScreen({ theme }) {
         <div style={{ color: theme.textFaint }}><Icon.Wrench size={32} /></div>
         <div style={{ fontSize: 14, color: theme.textFaint, textAlign: 'center' }}>Přehled strojů se připravuje.</div>
       </div>
+    </div>
+  );
+}
+
+// Krátký nadpis dne pro galerii, ve stylu Google Photos: "Dnes", "Včera",
+// nebo "12. srpna 2026" — bez uvedení dne v týdnu, na rozdíl od fmtDateLabel.
+function fmtGalleryDateHeading(dateKey) {
+  const today = fmtDateKey(Date.now());
+  const yesterday = fmtDateKey(Date.now() - 86400000);
+  if (dateKey === today) return 'Dnes';
+  if (dateKey === yesterday) return 'Včera';
+  const [y, m, d] = dateKey.split('-').map(Number);
+  return `${d}. ${MONTH_NAMES[m - 1]} ${y}`;
+}
+
+function GalleryScreen({ theme, db, refreshTick, onOpenRecord, columns, onColumnsChange }) {
+  const [records, setRecords] = useState([]);
+  const [lightbox, setLightbox] = useState(null); // { photos: [{url, record}], index }
+  const [copyFeedback, setCopyFeedback] = useState(false);
+  const [selected, setSelected] = useState(() => new Set()); // Set of "recordId|photoIndex" keys
+  const [showColumnsMenu, setShowColumnsMenu] = useState(false);
+  const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
+  const [confirmDeleteCurrent, setConfirmDeleteCurrent] = useState(false);
+  const [selectionFeedback, setSelectionFeedback] = useState(null); // { type, text }
+  const longPressTimer = useRef(null);
+  const longPressFired = useRef(false);
+
+  // Dlouhé podržení fotky (500ms) aktivuje výběrový režim a označí tu fotku.
+  // longPressFired brání tomu, aby se po dokončení long-pressu ještě navíc
+  // spustil normální onClick handler (browser posílá click i po pointerup).
+  function startLongPress(key) {
+    longPressFired.current = false;
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      setSelected(prev => {
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+    }, 500);
+  }
+
+  function cancelLongPress() {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }
+
+  const load = useCallback(async () => {
+    const all = await db.getAll('records');
+    setRecords(all);
+  }, [db]);
+
+  useEffect(() => { load(); }, [load, refreshTick]);
+
+  // Sestaví plochý seznam { url, record, photoIndex, key } pro každou fotku
+  // napříč všemi záznamy, pak je seskupí podle dne (nejnovější den nahoře,
+  // fotky uvnitř dne v pořadí od nejnovějšího záznamu). photoIndex je pozice
+  // fotky uvnitř record.photos, potřebná pro mazání konkrétní fotky.
+  const sections = useMemo(() => {
+    const byDate = {};
+    const sorted = [...records].sort((a, b) => b.startTime - a.startTime);
+    sorted.forEach(r => {
+      (r.photos || []).forEach((url, photoIndex) => {
+        if (!byDate[r.date]) byDate[r.date] = [];
+        byDate[r.date].push({ url, record: r, photoIndex, key: `${r.id}|${photoIndex}` });
+      });
+    });
+    return Object.keys(byDate)
+      .sort((a, b) => b.localeCompare(a))
+      .map(date => ({ date, items: byDate[date] }));
+  }, [records]);
+
+  const isEmpty = sections.length === 0;
+  const selectionMode = selected.size > 0;
+  const allItems = useMemo(() => sections.flatMap(s => s.items), [sections]);
+  const selectedItems = useMemo(() => allItems.filter(it => selected.has(it.key)), [allItems, selected]);
+
+  function openLightbox(sectionIdx, itemIdx) {
+    if (selectionMode) return; // v režimu výběru klik na fotku přepíná výběr, ne lightbox
+    const flatItems = sections.flatMap(s => s.items);
+    const globalIndex = sections.slice(0, sectionIdx).reduce((n, s) => n + s.items.length, 0) + itemIdx;
+    setLightbox({ items: flatItems, index: globalIndex });
+  }
+
+  function toggleSelect(key) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleSelectAllInSection(section) {
+    const keys = section.items.map(it => it.key);
+    const allSelected = keys.every(k => selected.has(k));
+    setSelected(prev => {
+      const next = new Set(prev);
+      keys.forEach(k => allSelected ? next.delete(k) : next.add(k));
+      return next;
+    });
+  }
+
+  function clearSelection() { setSelected(new Set()); }
+
+  async function shareSelected() {
+    for (const item of selectedItems) await sharePhoto(item.url, item.record, item.photoIndex);
+  }
+
+  async function copySelected() {
+    // Schránka podporuje jen jeden obrázek najednou — zkopíruje se první z výběru.
+    if (selectedItems.length === 0) return;
+    const ok = await copyPhotoToClipboard(selectedItems[0].url);
+    setSelectionFeedback({ type: ok ? 'success' : 'error', text: ok ? 'Zkopírováno do schránky' : 'Kopírování se nezdařilo' });
+    setTimeout(() => setSelectionFeedback(null), 1800);
+  }
+
+  async function downloadSelected() {
+    for (const item of selectedItems) await downloadPhoto(item.url, item.record, item.photoIndex);
+  }
+
+  async function deleteSelected() {
+    setConfirmDeleteSelected(false);
+    // Vybrané fotky seskupíme podle záznamu, ať každý záznam upravíme jen jednou.
+    const byRecord = new Map();
+    selectedItems.forEach(item => {
+      if (!byRecord.has(item.record.id)) byRecord.set(item.record.id, { record: item.record, indices: new Set() });
+      byRecord.get(item.record.id).indices.add(item.photoIndex);
+    });
+    for (const { record, indices } of byRecord.values()) {
+      const updatedPhotos = (record.photos || []).filter((_, i) => !indices.has(i));
+      await db.put('records', { ...record, photos: updatedPhotos });
+    }
+    clearSelection();
+    load();
+  }
+
+  // Smaže jen fotku aktuálně otevřenou v lightboxu (ne celý výběr). Po smazání
+  // se lightbox buď posune na další zbývající fotku, nebo se zavře, pokud
+  // to byla poslední fotka.
+  async function deleteCurrentLightboxPhoto() {
+    setConfirmDeleteCurrent(false);
+    if (!current) return;
+    const { record, photoIndex } = current;
+    const updatedPhotos = (record.photos || []).filter((_, i) => i !== photoIndex);
+    await db.put('records', { ...record, photos: updatedPhotos });
+    setLightbox(l => {
+      if (!l) return null;
+      const remaining = l.items.filter((_, i) => i !== l.index);
+      if (remaining.length === 0) return null;
+      const nextIndex = Math.min(l.index, remaining.length - 1);
+      return { items: remaining, index: nextIndex };
+    });
+    load();
+  }
+
+  const current = lightbox ? lightbox.items[lightbox.index] : null;
+  const columnOptions = [2, 3, 4, 5, 6];
+
+  return (
+    <div style={{ ...S.screen, background: theme.bg }}>
+      <div style={{ padding: '22px 20px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {selectionMode ? (
+          <>
+            <button onClick={clearSelection} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', color: theme.text }}>
+              <Icon.X size={18} weight="bold" />
+              <span style={{ fontSize: 15, fontWeight: 700 }}>{selected.size} vybráno</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 20, fontWeight: 800, color: theme.text }}>Galerie</div>
+            <div style={{ position: 'relative' }}>
+              <IconButton theme={theme} onClick={() => setShowColumnsMenu(v => !v)}><Icon.Bar size={18} /></IconButton>
+              {showColumnsMenu && (
+                <>
+                  <div onClick={() => setShowColumnsMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 39 }} />
+                  <div style={{
+                    position: 'absolute', top: 46, right: 0, zIndex: 40, background: theme.surfaceSolid,
+                    border: `1px solid ${theme.borderStrong}`, borderRadius: 14, padding: 6, boxShadow: theme.shadow,
+                    display: 'flex', flexDirection: 'column', minWidth: 140,
+                  }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: theme.textFaint, padding: '8px 10px 4px' }}>
+                      Sloupců v mřížce
+                    </div>
+                    {columnOptions.map(n => (
+                      <button
+                        key={n}
+                        onClick={() => { onColumnsChange(n); setShowColumnsMenu(false); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 10px', borderRadius: 9,
+                          background: columns === n ? theme.primarySoft : 'none', border: 'none',
+                          color: columns === n ? theme.primary : theme.text, fontSize: 14, fontWeight: columns === n ? 700 : 500,
+                        }}
+                      >
+                        <span>{n} {n === 1 ? 'sloupec' : n < 5 ? 'sloupce' : 'sloupců'}</span>
+                        {columns === n && <Icon.Check size={14} weight="bold" />}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {selectionMode && (
+        <div style={{ display: 'flex', gap: 8, padding: '0 16px 14px' }}>
+          <button onClick={shareSelected} style={{ width: 40, height: 40, borderRadius: 11, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, flexShrink: 0 }}>
+            <Icon.ShareIcon size={17} />
+          </button>
+          <button onClick={copySelected} style={{ width: 40, height: 40, borderRadius: 11, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, flexShrink: 0 }}>
+            <Icon.Copy size={17} />
+          </button>
+          <button onClick={downloadSelected} style={{ width: 40, height: 40, borderRadius: 11, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, flexShrink: 0 }}>
+            <Icon.Download size={17} />
+          </button>
+          <button onClick={() => setConfirmDeleteSelected(true)} style={{ width: 40, height: 40, borderRadius: 11, background: theme.emSoft, border: `1px solid ${theme.em}44`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.em, flexShrink: 0 }}>
+            <Icon.Trash size={17} />
+          </button>
+        </div>
+      )}
+
+      {selectionFeedback && (
+        <div style={{ margin: '0 16px 12px', fontSize: 12.5, color: selectionFeedback.type === 'error' ? theme.em : theme.cm, background: selectionFeedback.type === 'error' ? theme.emSoft : theme.cmSoft, border: `1px solid ${selectionFeedback.type === 'error' ? theme.em : theme.cm}33`, borderRadius: 10, padding: '9px 13px' }}>
+          {selectionFeedback.text}
+        </div>
+      )}
+
+      {isEmpty ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 30px', gap: 10 }}>
+          <div style={{ color: theme.textFaint }}><Icon.Image size={32} /></div>
+          <div style={{ fontSize: 14, color: theme.textFaint, textAlign: 'center' }}>Zatím žádné fotky. Přidej je při zápisu opravy.</div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 20px' }}>
+          {sections.map((section, sIdx) => {
+            const sectionKeys = section.items.map(it => it.key);
+            const allSelected = sectionKeys.every(k => selected.has(k));
+            return (
+              <div key={section.date} style={{ marginBottom: 22 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, padding: '0 4px' }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: theme.textDim }}>
+                    {fmtGalleryDateHeading(section.date)}
+                  </div>
+                  {selectionMode && (
+                    <button onClick={() => toggleSelectAllInSection(section)} style={{ fontSize: 12, fontWeight: 600, color: theme.primary, background: 'none', border: 'none' }}>
+                      {allSelected ? 'Zrušit výběr' : 'Vybrat vše'}
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns}, 1fr)`, gap: 6 }}>
+                  {section.items.map((item, iIdx) => {
+                    const isSelected = selected.has(item.key);
+                    return (
+                      <div key={iIdx} style={{ position: 'relative', aspectRatio: '1' }}>
+                        <button
+                          onClick={() => {
+                            if (longPressFired.current) { longPressFired.current = false; return; }
+                            if (selectionMode) toggleSelect(item.key); else openLightbox(sIdx, iIdx);
+                          }}
+                          onPointerDown={() => startLongPress(item.key)}
+                          onPointerUp={cancelLongPress}
+                          onPointerLeave={cancelLongPress}
+                          onContextMenu={(e) => e.preventDefault()}
+                          style={{ position: 'relative', width: '100%', height: '100%', borderRadius: 10, overflow: 'hidden', background: theme.surface, border: 'none', userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'manipulation' }}
+                        >
+                          <img src={item.url} draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
+                          {columns <= 3 && (
+                            <div style={{
+                              position: 'absolute', left: 0, right: 0, bottom: 0,
+                              background: 'linear-gradient(to top, rgba(0,0,0,0.75), transparent)',
+                              padding: '14px 6px 5px',
+                            }}>
+                              <div style={{ fontSize: 10, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {item.record.machineName}
+                              </div>
+                            </div>
+                          )}
+                        </button>
+                        {selectionMode && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleSelect(item.key); }}
+                            style={{
+                              position: 'absolute', right: 5, bottom: 5, width: 22, height: 22, borderRadius: '50%',
+                              background: isSelected ? theme.primary : 'rgba(0,0,0,0.4)',
+                              border: `1.5px solid ${isSelected ? theme.primary : 'rgba(255,255,255,0.8)'}`,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1,
+                            }}
+                          >
+                            {isSelected && <Icon.Check size={12} weight="bold" />}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {lightbox && current && (
+        <div
+          onClick={() => setLightbox(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.94)', display: 'flex', flexDirection: 'column' }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px' }}>
+            <button
+              onClick={() => { onOpenRecord(current.record); setLightbox(null); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 10, padding: '8px 12px', color: '#fff' }}
+            >
+              <Icon.Back size={15} />
+              <span style={{ fontSize: 12.5, fontWeight: 600 }}>{current.record.machineName}</span>
+            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={async () => { await sharePhoto(current.url, current.record, current.photoIndex); }}
+                style={{ width: 40, height: 40, borderRadius: 11, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+              >
+                <Icon.ShareIcon size={17} />
+              </button>
+              <button
+                onClick={async () => {
+                  const ok = await copyPhotoToClipboard(current.url);
+                  if (ok) { setCopyFeedback(true); setTimeout(() => setCopyFeedback(false), 1800); }
+                }}
+                style={{ width: 40, height: 40, borderRadius: 11, background: copyFeedback ? theme.cmSoft : 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: copyFeedback ? theme.cm : '#fff' }}
+              >
+                {copyFeedback ? <Icon.Check size={16} weight="bold" /> : <Icon.Copy size={17} />}
+              </button>
+              <button
+                onClick={async () => { await downloadPhoto(current.url, current.record, current.photoIndex); }}
+                style={{ width: 40, height: 40, borderRadius: 11, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+              >
+                <Icon.Download size={17} />
+              </button>
+              <button
+                onClick={() => setConfirmDeleteCurrent(true)}
+                style={{ width: 40, height: 40, borderRadius: 11, background: 'rgba(244,63,94,0.18)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ff6976' }}
+              >
+                <Icon.Trash size={17} />
+              </button>
+              <button
+                onClick={() => setLightbox(null)}
+                style={{ width: 40, height: 40, borderRadius: 11, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+              >
+                <Icon.X size={18} weight="bold" />
+              </button>
+            </div>
+          </div>
+
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+            {lightbox.index > 0 && (
+              <button
+                onClick={() => setLightbox(l => ({ ...l, index: l.index - 1 }))}
+                style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', zIndex: 2 }}
+              >
+                <Icon.Back size={20} />
+              </button>
+            )}
+            <img src={current.url} style={{ maxWidth: '92vw', maxHeight: '76vh', objectFit: 'contain', borderRadius: 8 }} />
+            {lightbox.index < lightbox.items.length - 1 && (
+              <button
+                onClick={() => setLightbox(l => ({ ...l, index: l.index + 1 }))}
+                style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', zIndex: 2 }}
+              >
+                <Icon.ChevronRight size={20} />
+              </button>
+            )}
+          </div>
+
+          <div style={{ textAlign: 'center', padding: '10px 16px 20px', fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>
+            {fmtGalleryDateHeading(current.record.date)} · {lightbox.index + 1} / {lightbox.items.length}
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteSelected && (
+        <div onClick={() => setConfirmDeleteSelected(false)} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 70 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: theme.surfaceSolid, border: `1px solid ${theme.borderStrong}`, borderRadius: 20, padding: 22, width: '100%', maxWidth: 320, boxShadow: theme.shadow }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: theme.text, marginBottom: 4 }}>Smazat {selected.size} {selected.size === 1 ? 'fotku' : selected.size < 5 ? 'fotky' : 'fotek'}?</div>
+            <div style={{ fontSize: 13, color: theme.textDim, marginBottom: 18 }}>Tato akce se nedá vrátit.</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setConfirmDeleteSelected(false)} style={{ flex: 1, background: theme.surfaceElevated, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '12px', color: theme.text, fontWeight: 600 }}>Zrušit</button>
+              <button onClick={deleteSelected} style={{ flex: 1, background: theme.em, border: 'none', borderRadius: 12, padding: '12px', color: '#fff', fontWeight: 700 }}>Smazat</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteCurrent && (
+        <div onClick={() => setConfirmDeleteCurrent(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 80 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: theme.surfaceSolid, border: `1px solid ${theme.borderStrong}`, borderRadius: 20, padding: 22, width: '100%', maxWidth: 320, boxShadow: theme.shadow }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: theme.text, marginBottom: 4 }}>Smazat fotku?</div>
+            <div style={{ fontSize: 13, color: theme.textDim, marginBottom: 18 }}>Tato akce se nedá vrátit.</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setConfirmDeleteCurrent(false)} style={{ flex: 1, background: theme.surfaceElevated, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '12px', color: theme.text, fontWeight: 600 }}>Zrušit</button>
+              <button onClick={deleteCurrentLightboxPhoto} style={{ flex: 1, background: theme.em, border: 'none', borderRadius: 12, padding: '12px', color: '#fff', fontWeight: 700 }}>Smazat</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
