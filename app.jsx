@@ -3,13 +3,13 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '5.4';
+const APP_VERSION = '6.5';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
 // ============================================================
 const DB_NAME = 'udrzba-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function getDB() {
   return new Promise((resolve, reject) => {
@@ -31,6 +31,9 @@ function getDB() {
       }
       if (!idb.objectStoreNames.contains('settings')) {
         idb.createObjectStore('settings', { keyPath: 'id' });
+      }
+      if (!idb.objectStoreNames.contains('categories')) {
+        idb.createObjectStore('categories', { keyPath: 'id' });
       }
     };
     req.onsuccess = () => {
@@ -217,6 +220,34 @@ const Icon = {
   Copy: phosphorIcon('copy'),
   ShareIcon: phosphorIcon('share-network'),
   House: phosphorIcon('house'),
+  // Sada ikon pro kategorie strojů — dostatečně různorodá, ať jde vizuálně
+  // odlišit různé typy vybavení/oblastí (elektro, hydraulika, doprava, ...).
+  CatGear: phosphorIcon('gear-six'),
+  CatBolt: phosphorIcon('lightning'),
+  CatDrop: phosphorIcon('drop'),
+  CatFlame: phosphorIcon('flame'),
+  CatFan: phosphorIcon('fan'),
+  CatEngine: phosphorIcon('engine'),
+  CatTruck: phosphorIcon('truck'),
+  CatFactory: phosphorIcon('factory'),
+  CatBox: phosphorIcon('package'),
+  CatCircuit: phosphorIcon('circuitry'),
+  CatGauge: phosphorIcon('gauge'),
+  CatToolbox: phosphorIcon('toolbox'),
+  CatBuilding: phosphorIcon('buildings'),
+  CatConveyor: phosphorIcon('rows'),
+  CatFolder: phosphorIcon('folder'),
+  CatStar: phosphorIcon('star'),
+  // Sada volitelných ikon pro jednotlivé stroje (odlišná od kategorií).
+  MachStroj: phosphorIcon('wrench'),
+  MachTable: phosphorIcon('table'),
+  MachCamera: phosphorIcon('camera'),
+  MachFlame: phosphorIcon('flame'),
+  MachSparkle: phosphorIcon('sparkle'),
+  MachStamp: phosphorIcon('stamp'),
+  MachCarousel: phosphorIcon('gear-six'),
+  DragHandle: phosphorIcon('dots-six-vertical'),
+  SortAlpha: phosphorIcon('sort-ascending'),
 };
 
 // ============================================================
@@ -258,6 +289,29 @@ const CM_SUBTYPES = {
   normal: { label: 'Normální práce', short: 'Normál' },
   oprava: { label: 'Oprava', short: 'Oprava' },
 };
+
+// Sada volitelných ikon pro kategorie strojů — klíč se ukládá do category.icon.
+const CATEGORY_ICONS = [
+  'CatGear', 'CatBolt', 'CatDrop', 'CatFlame', 'CatFan', 'CatEngine',
+  'CatTruck', 'CatFactory', 'CatBox', 'CatCircuit', 'CatGauge', 'CatToolbox',
+  'CatBuilding', 'CatConveyor', 'CatFolder', 'CatStar',
+];
+
+// Sada volitelných ikon pro jednotlivé stroje — Sparkle zastupuje svařování
+// (jiskry) a gear-six "kolotoč" (Phosphor nemá přesné ekvivalenty pro tyto
+// dva pojmy), obojí lze obarvit stejně jako ostatní ikony přes currentColor.
+const MACHINE_ICONS = [
+  'MachStroj', 'MachTable', 'MachCamera', 'MachFlame', 'MachSparkle', 'MachStamp', 'MachCarousel',
+];
+
+// Paleta barev pro kategorie — hex hodnoty voleny tak, aby fungovaly čitelně
+// jak na tmavém, tak na světlém pozadí (dostatečně sytá, ne pastelová).
+const CATEGORY_COLORS = [
+  '#9184d9', '#60d291', '#e4b750', '#ff6976', '#5aa9e6',
+  '#e67ea3', '#7fd4c1', '#d99a5a', '#8b8fa3', '#c17ee6',
+];
+
+const UNCATEGORIZED_ID = '__uncategorized__';
 
 function useElapsed(startTime, running) {
   const [now, setNow] = useState(Date.now());
@@ -647,7 +701,7 @@ function MachinePicker({ theme, db, onPick, onCancel }) {
   async function createAndPick() {
     const name = query.trim();
     if (!name) return;
-    const machine = { id: uid(), name, createdAt: Date.now(), lastUsed: Date.now() };
+    const machine = { id: uid(), name, categoryId: null, notes: '', photos: [], createdAt: Date.now(), lastUsed: Date.now() };
     await db.put('machines', machine);
     onPick(machine);
   }
@@ -1409,7 +1463,6 @@ function DateEditor({ theme, label, value, onChange, isDark }) {
         <input
           type="date"
           value={dateInputValue(value)}
-          max={dateInputValue(Date.now())}
           onChange={e => {
             if (!e.target.value) return;
             const [y, m, d] = e.target.value.split('-').map(Number);
@@ -1879,6 +1932,7 @@ function App() {
   const [pendingSession, setPendingSession] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [galleryColumns, setGalleryColumns] = useState(3);
+  const [machineColumns, setMachineColumns] = useState(3);
   const stackRef = useRef(stack);
   stackRef.current = stack;
   const { mode, setMode, theme, resolvedName: resolvedThemeName } = useTheme();
@@ -1895,6 +1949,8 @@ function App() {
       if (settings?.mode) setMode(settings.mode);
       const gallerySettings = await database.get('settings', 'gallery').catch(() => null);
       if (gallerySettings?.columns) setGalleryColumns(gallerySettings.columns);
+      const machineSettings = await database.get('settings', 'machines').catch(() => null);
+      if (machineSettings?.columns) setMachineColumns(machineSettings.columns);
     });
   }, []);
 
@@ -1942,6 +1998,11 @@ function App() {
   async function handleGalleryColumnsChange(cols) {
     setGalleryColumns(cols);
     if (db) await db.put('settings', { id: 'gallery', columns: cols });
+  }
+
+  async function handleMachineColumnsChange(cols) {
+    setMachineColumns(cols);
+    if (db) await db.put('settings', { id: 'machines', columns: cols });
   }
 
   async function startTimer() {
@@ -2074,7 +2135,33 @@ function App() {
             onAddPhoto={addSessionPhoto}
           />
         )}
-        {route.screen === 'machines' && <MachinesScreen theme={theme} />}
+        {route.screen === 'machines' && (
+          <MachinesScreen
+            theme={theme} db={db} refreshTick={refreshTick}
+            machineColumns={machineColumns} onMachineColumnsChange={handleMachineColumnsChange}
+            onOpenMachine={(m) => push('machineForm', { machine: m })}
+            onOpenCategory={(c) => push('categoryForm', { category: c })}
+            onCreateMachine={() => push('machineForm', { machine: null })}
+            onCreateCategory={() => push('categoryForm', { category: null })}
+            onDataChanged={() => setRefreshTick(t => t + 1)}
+          />
+        )}
+        {route.screen === 'machineForm' && (
+          <MachineFormScreen
+            theme={theme} db={db} machine={route.machine}
+            onBack={() => pop(1)}
+            onSaved={() => { setRefreshTick(t => t + 1); pop(1); }}
+            onDeleted={() => { setRefreshTick(t => t + 1); pop(1); }}
+          />
+        )}
+        {route.screen === 'categoryForm' && (
+          <CategoryFormScreen
+            theme={theme} db={db} category={route.category}
+            onBack={() => pop(1)}
+            onSaved={() => { setRefreshTick(t => t + 1); pop(1); }}
+            onDeleted={() => { setRefreshTick(t => t + 1); pop(1); }}
+          />
+        )}
         {route.screen === 'gallery' && (
           <GalleryScreen
             theme={theme} db={db} refreshTick={refreshTick}
@@ -2164,16 +2251,756 @@ function TabBar({ theme, activeTab, onSwitch }) {
   );
 }
 
-function MachinesScreen({ theme }) {
+// Ořízne název stroje na 8 znaků pro zobrazení v bloku mřížky — dlouhé
+// vlastní názvy jinak roztahují buňky mřížky do nekonzistentních rozměrů.
+// Plný název zůstává vidět v detailu stroje a v pickeru při zápisu opravy.
+function truncateMachineName(name) {
+  if (!name) return '';
+  return name.length > 8 ? name.slice(0, 8) + '…' : name;
+}
+
+function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColumnsChange, onOpenMachine, onOpenCategory, onCreateMachine, onCreateCategory, onDataChanged }) {
+  const [machines, setMachines] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [collapsed, setCollapsed] = useState(() => new Set());
+  const [customOrderMode, setCustomOrderMode] = useState(false);
+  const [showColumnsMenu, setShowColumnsMenu] = useState(false);
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  // Vlastní touch-friendly drag-and-drop postavený na Pointer Events, protože
+  // nativní HTML5 Drag and Drop API (draggable/onDragStart/onDrop) nefunguje
+  // na dotykových zařízeních — Chrome/Firefox/Samsung Internet pro Android
+  // nevystřelují DragEvent z prstu, jen z myši/trackpadu. Pointer Events
+  // fungují shodně na myši i dotyku.
+  const [dragState, setDragState] = useState(null); // { type, id, x, y, overKey }
+  const dragStateRef = useRef(null);
+  const itemRectsRef = useRef(new Map()); // key ("machine:id" | "category:id") -> DOMRect
+
+  const load = useCallback(async () => {
+    const [allMachines, allCategories] = await Promise.all([db.getAll('machines'), db.getAll('categories')]);
+    setMachines(allMachines);
+    setCategories(allCategories);
+  }, [db]);
+
+  useEffect(() => { load(); }, [load, refreshTick]);
+
+  // Skupiny: každá skutečná kategorie + jedna pevná "Nezařazené" na konci.
+  // V abecedním režimu se kategorie i stroje uvnitř řadí podle jména; ve
+  // vlastním režimu se řadí podle uloženého pole "order" (nastaveného drag-and-drop).
+  const groups = useMemo(() => {
+    const byCategory = new Map();
+    categories.forEach(c => byCategory.set(c.id, { category: c, items: [] }));
+    const uncategorized = { category: null, items: [] };
+    machines.forEach(m => {
+      const bucket = m.categoryId && byCategory.has(m.categoryId) ? byCategory.get(m.categoryId) : uncategorized;
+      bucket.items.push(m);
+    });
+    const sortFn = customOrderMode
+      ? (a, b) => (a.order ?? 0) - (b.order ?? 0)
+      : (a, b) => a.name.localeCompare(b.name, 'cs');
+    const catSortFn = customOrderMode
+      ? (a, b) => (a.order ?? 0) - (b.order ?? 0)
+      : (a, b) => a.name.localeCompare(b.name, 'cs');
+    const list = Array.from(byCategory.values());
+    list.forEach(g => g.items.sort(sortFn));
+    list.sort((a, b) => catSortFn(a.category, b.category));
+    uncategorized.items.sort(sortFn);
+    list.push(uncategorized);
+    return list;
+  }, [machines, categories, customOrderMode]);
+
+  function toggleCollapse(id) {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  // Přesune stroj na pozici cílového stroje uvnitř dané skupiny (kategorie
+  // nebo Nezařazené), případně stroj přeřadí do jiné skupiny, pokud tam byl přetažen.
+  async function moveMachine(draggedId, targetGroupCategoryId, targetMachineId) {
+    const draggedMachine = machines.find(m => m.id === draggedId);
+    if (!draggedMachine) return;
+    const groupItems = machines
+      .filter(m => (m.categoryId || null) === targetGroupCategoryId)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const withoutDragged = groupItems.filter(m => m.id !== draggedId);
+    const targetIdx = targetMachineId ? withoutDragged.findIndex(m => m.id === targetMachineId) : withoutDragged.length;
+    const insertAt = targetIdx === -1 ? withoutDragged.length : targetIdx;
+    withoutDragged.splice(insertAt, 0, { ...draggedMachine, categoryId: targetGroupCategoryId });
+    for (let i = 0; i < withoutDragged.length; i++) {
+      const m = withoutDragged[i];
+      await db.put('machines', { ...m, categoryId: targetGroupCategoryId, order: i });
+    }
+    load();
+    onDataChanged?.();
+  }
+
+  async function moveCategory(draggedId, targetCategoryId) {
+    if (draggedId === targetCategoryId) return;
+    const sorted = [...categories].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const withoutDragged = sorted.filter(c => c.id !== draggedId);
+    const draggedCategory = categories.find(c => c.id === draggedId);
+    if (!draggedCategory) return;
+    const targetIdx = withoutDragged.findIndex(c => c.id === targetCategoryId);
+    withoutDragged.splice(targetIdx === -1 ? withoutDragged.length : targetIdx, 0, draggedCategory);
+    for (let i = 0; i < withoutDragged.length; i++) {
+      await db.put('categories', { ...withoutDragged[i], order: i });
+    }
+    load();
+  }
+
+  // Long-press (250ms) na blok stroje/kategorie v customOrderMode zahájí
+  // tažení. Během tažení sledujeme pointer a přes elementFromPoint zjišťujeme,
+  // nad kterým prvkem (označeným data-drop-key) se prst/kurzor právě nachází.
+  const longPressRef = useRef(null);
+
+  function startDragTracking(type, id, e) {
+    if (!customOrderMode) return;
+    const point = e.touches ? e.touches[0] : e;
+    const startX = point.clientX, startY = point.clientY;
+    longPressRef.current = setTimeout(() => {
+      const state = { type, id, x: startX, y: startY, overKey: null };
+      dragStateRef.current = state;
+      setDragState(state);
+      if (navigator.vibrate) navigator.vibrate(15);
+    }, 250);
+  }
+
+  function cancelDragStart() {
+    if (longPressRef.current) { clearTimeout(longPressRef.current); longPressRef.current = null; }
+  }
+
+  function handlePointerMoveGlobal(e) {
+    if (!dragStateRef.current) return;
+    e.preventDefault?.();
+    const point = e.touches ? e.touches[0] : e;
+    const el = document.elementFromPoint(point.clientX, point.clientY);
+    const dropTarget = el?.closest('[data-drop-key]');
+    const overKey = dropTarget?.getAttribute('data-drop-key') || null;
+    const next = { ...dragStateRef.current, x: point.clientX, y: point.clientY, overKey };
+    dragStateRef.current = next;
+    setDragState(next);
+  }
+
+  async function handlePointerUpGlobal() {
+    cancelDragStart();
+    const state = dragStateRef.current;
+    dragStateRef.current = null;
+    setDragState(null);
+    if (!state || !state.overKey) return;
+    const [dropType, dropId] = state.overKey.split(':');
+    if (state.type === 'machine') {
+      if (dropType === 'group' || dropType === 'category') {
+        const targetCategoryId = dropId === UNCATEGORIZED_ID ? null : dropId;
+        await moveMachine(state.id, targetCategoryId, null);
+      } else if (dropType === 'machine' && dropId !== state.id) {
+        const targetMachine = machines.find(m => m.id === dropId);
+        if (targetMachine) await moveMachine(state.id, targetMachine.categoryId || null, dropId);
+      }
+    } else if (state.type === 'category' && dropType === 'category' && dropId !== state.id) {
+      await moveCategory(state.id, dropId);
+    }
+  }
+
+  useEffect(() => {
+    if (!dragState) return;
+    window.addEventListener('pointermove', handlePointerMoveGlobal, { passive: false });
+    window.addEventListener('pointerup', handlePointerUpGlobal);
+    window.addEventListener('pointercancel', handlePointerUpGlobal);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMoveGlobal);
+      window.removeEventListener('pointerup', handlePointerUpGlobal);
+      window.removeEventListener('pointercancel', handlePointerUpGlobal);
+    };
+  }, [dragState, machines, categories]);
+
+  const columnOptions = [2, 3, 4, 5, 6];
+
   return (
     <div style={{ ...S.screen, background: theme.bg }}>
-      <div style={{ padding: '22px 20px 0' }}>
+      <div style={{ padding: '22px 20px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ fontSize: 20, fontWeight: 800, color: theme.text }}>Stroje</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ position: 'relative' }}>
+            <IconButton theme={theme} onClick={() => setShowAddMenu(v => !v)}><Icon.Plus size={18} /></IconButton>
+            {showAddMenu && (
+              <>
+                <div onClick={() => setShowAddMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 39 }} />
+                <div style={{
+                  position: 'absolute', top: 46, right: 0, zIndex: 40, background: theme.surfaceSolid,
+                  border: `1px solid ${theme.borderStrong}`, borderRadius: 14, padding: 6, boxShadow: theme.shadow,
+                  display: 'flex', flexDirection: 'column', minWidth: 180,
+                }}>
+                  <button onClick={() => { setShowAddMenu(false); onCreateMachine(); }} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 10px', borderRadius: 9, background: 'none', border: 'none', color: theme.text, fontSize: 14, fontWeight: 600 }}>
+                    <Icon.Wrench size={16} /><span>Nový stroj</span>
+                  </button>
+                  <button onClick={() => { setShowAddMenu(false); onCreateCategory(); }} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 10px', borderRadius: 9, background: 'none', border: 'none', color: theme.text, fontSize: 14, fontWeight: 600 }}>
+                    <Icon.CatFolder size={16} /><span>Nová kategorie</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+          <button
+            onClick={() => setCustomOrderMode(v => !v)}
+            title={customOrderMode ? 'Vlastní pořadí' : 'Abecedně'}
+            style={{ width: 42, height: 42, borderRadius: 12, background: customOrderMode ? theme.primarySoft : theme.surface, border: `1px solid ${customOrderMode ? theme.primary : theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: customOrderMode ? theme.primary : theme.textDim, backdropFilter: theme.blur }}
+          >
+            {customOrderMode ? <Icon.DragHandle size={17} /> : <Icon.SortAlpha size={17} />}
+          </button>
+          <div style={{ position: 'relative' }}>
+            <IconButton theme={theme} onClick={() => setShowColumnsMenu(v => !v)}><Icon.Bar size={18} /></IconButton>
+            {showColumnsMenu && (
+              <>
+                <div onClick={() => setShowColumnsMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 39 }} />
+                <div style={{
+                  position: 'absolute', top: 46, right: 0, zIndex: 40, background: theme.surfaceSolid,
+                  border: `1px solid ${theme.borderStrong}`, borderRadius: 14, padding: 6, boxShadow: theme.shadow,
+                  display: 'flex', flexDirection: 'column', minWidth: 140,
+                }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: theme.textFaint, padding: '8px 10px 4px' }}>
+                    Sloupců v mřížce
+                  </div>
+                  {columnOptions.map(n => (
+                    <button
+                      key={n}
+                      onClick={() => { onMachineColumnsChange(n); setShowColumnsMenu(false); }}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 10px', borderRadius: 9,
+                        background: machineColumns === n ? theme.primarySoft : 'none', border: 'none',
+                        color: machineColumns === n ? theme.primary : theme.text, fontSize: 14, fontWeight: machineColumns === n ? 700 : 500,
+                      }}
+                    >
+                      <span>{n} {n === 1 ? 'sloupec' : n < 5 ? 'sloupce' : 'sloupců'}</span>
+                      {machineColumns === n && <Icon.Check size={14} weight="bold" />}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 30px', gap: 10 }}>
-        <div style={{ color: theme.textFaint }}><Icon.Wrench size={32} /></div>
-        <div style={{ fontSize: 14, color: theme.textFaint, textAlign: 'center' }}>Přehled strojů se připravuje.</div>
+
+      {machines.length === 0 && categories.length === 0 ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 30px', gap: 10 }}>
+          <div style={{ color: theme.textFaint }}><Icon.Wrench size={32} /></div>
+          <div style={{ fontSize: 14, color: theme.textFaint, textAlign: 'center' }}>Zatím žádné stroje. Přidej první přes tlačítko +.</div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 20px' }}>
+          {groups.map(group => {
+            const groupId = group.category ? group.category.id : UNCATEGORIZED_ID;
+            const isCollapsed = collapsed.has(groupId);
+            const cat = group.category;
+            const catColor = cat ? cat.color || theme.primary : theme.textFaint;
+            const CatIconComp = cat && cat.icon && Icon[cat.icon] ? Icon[cat.icon] : null;
+            // Prázdné "Nezařazené" nezobrazujeme (nemá smysl, není to skutečná
+            // kategorie k editaci), ale prázdné skutečné kategorie ZŮSTÁVAJÍ
+            // vidět — jinak by do nich nikdy nešlo nic přidat.
+            if (group.items.length === 0 && !cat) return null;
+            const groupDropKey = `group:${groupId}`;
+            const isGroupDropTarget = dragState?.overKey === groupDropKey;
+            return (
+              <div
+                key={groupId}
+                data-drop-key={groupDropKey}
+                style={{ marginBottom: 20, borderRadius: 14, outline: isGroupDropTarget ? `2px dashed ${theme.primary}` : 'none', outlineOffset: 4, transition: 'outline 0.1s ease' }}
+              >
+                <div
+                  data-drop-key={cat ? `category:${cat.id}` : undefined}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: '9px 12px', borderRadius: 12,
+                    background: dragState?.overKey === `category:${cat?.id}` ? theme.primarySoft : theme.surface,
+                    border: `1px solid ${dragState?.overKey === `category:${cat?.id}` ? theme.primary : theme.border}`,
+                    borderLeft: cat ? `3px solid ${catColor}` : `1px solid ${theme.border}`,
+                    backdropFilter: theme.blur,
+                    touchAction: customOrderMode && cat ? 'none' : 'auto',
+                  }}
+                  onPointerDown={cat ? (e) => startDragTracking('category', cat.id, e) : undefined}
+                  onPointerUp={cancelDragStart}
+                  onPointerLeave={cancelDragStart}
+                >
+                  <button onClick={() => toggleCollapse(groupId)} style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'none', border: 'none', flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', color: theme.textFaint, transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.15s ease' }}>
+                      <Icon.ChevronRight size={13} />
+                    </div>
+                    {CatIconComp && (
+                      <div style={{ color: catColor, display: 'flex' }}>
+                        <CatIconComp size={15} weight="fill" />
+                      </div>
+                    )}
+                    <span style={{ fontSize: 14, fontWeight: 700, color: cat ? catColor : theme.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {cat ? cat.name : 'Nezařazené'}
+                    </span>
+                    <span style={{ fontSize: 11.5, color: theme.textFaint, fontWeight: 500 }}>({group.items.length})</span>
+                    {customOrderMode && cat && <Icon.DragHandle size={13} />}
+                  </button>
+                  {cat && (
+                    <button onClick={() => onOpenCategory(cat)} style={{ background: 'none', border: 'none', color: theme.textFaint }}>
+                      <Icon.Edit size={14} />
+                    </button>
+                  )}
+                </div>
+                {!isCollapsed && (
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${machineColumns}, 1fr)`, gap: 7 }}>
+                    {group.items.map(m => {
+                      const machineDropKey = `machine:${m.id}`;
+                      const isMachineDropTarget = dragState?.overKey === machineDropKey && dragState?.id !== m.id;
+                      const isBeingDragged = dragState?.type === 'machine' && dragState?.id === m.id;
+                      const MIconComp = m.icon && Icon[m.icon] ? Icon[m.icon] : null;
+                      const mColor = m.color || null;
+                      return (
+                        <button
+                          key={m.id}
+                          data-drop-key={machineDropKey}
+                          onClick={() => { if (!customOrderMode) onOpenMachine(m); }}
+                          onPointerDown={(e) => startDragTracking('machine', m.id, e)}
+                          onPointerUp={cancelDragStart}
+                          onPointerLeave={cancelDragStart}
+                          style={{
+                            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3,
+                            width: '100%', minWidth: 0, aspectRatio: '2.3', padding: '7px 5px', borderRadius: 12,
+                            background: isMachineDropTarget ? theme.primarySoft : (mColor ? `${mColor}14` : theme.surface),
+                            border: `1px solid ${isMachineDropTarget ? theme.primary : (mColor ? `${mColor}4A` : theme.border)}`,
+                            backdropFilter: theme.blur, textAlign: 'center', boxSizing: 'border-box',
+                            opacity: isBeingDragged ? 0.4 : 1,
+                            touchAction: customOrderMode ? 'none' : 'auto',
+                          }}
+                        >
+                          {MIconComp && (
+                            <div style={{ color: mColor || theme.textDim, display: 'flex' }}>
+                              <MIconComp size={machineColumns <= 3 ? 15 : 12} weight="fill" />
+                            </div>
+                          )}
+                          <div style={{ fontSize: machineColumns <= 3 ? 11.5 : 10, fontWeight: 600, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%', minWidth: 0 }}>
+                            {truncateMachineName(m.name)}
+                          </div>
+                          {m.photos?.length > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, color: theme.textFaint }}>
+                              <Icon.Image size={9} /><span>{m.photos.length}</span>
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {dragState && (() => {
+        const draggedMachine = dragState.type === 'machine' ? machines.find(m => m.id === dragState.id) : null;
+        const draggedCategory = dragState.type === 'category' ? categories.find(c => c.id === dragState.id) : null;
+        const label = draggedMachine?.name || draggedCategory?.name || '';
+        return (
+          <div style={{
+            position: 'fixed', left: dragState.x, top: dragState.y, transform: 'translate(-50%, -50%)',
+            pointerEvents: 'none', zIndex: 90, background: theme.primary, color: '#fff', fontSize: 12.5, fontWeight: 700,
+            padding: '8px 14px', borderRadius: 10, boxShadow: theme.shadow, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {label}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// Formulář pro vytvoření/editaci kategorie strojů: název, barva a ikona.
+function CategoryFormScreen({ theme, db, category, onBack, onSaved, onDeleted }) {
+  const isNew = !category;
+  const [name, setName] = useState(category?.name || '');
+  const [color, setColor] = useState(category?.color ?? null);
+  const [icon, setIcon] = useState(category?.icon ?? null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const IconPreview = icon ? Icon[icon] : null;
+
+  async function save() {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const record = {
+      id: category?.id || uid(),
+      name: trimmed, color, icon,
+      order: category?.order ?? Date.now(),
+      createdAt: category?.createdAt || Date.now(),
+    };
+    await db.put('categories', record);
+    onSaved(record);
+  }
+
+  async function performDelete() {
+    if (!category) return;
+    // Stroje v této kategorii se přesunou zpět do Nezařazené, ne se nesmažou.
+    const machines = await db.getAll('machines');
+    const affected = machines.filter(m => m.categoryId === category.id);
+    for (const m of affected) await db.put('machines', { ...m, categoryId: null });
+    await db.delete('categories', category.id);
+    onDeleted();
+  }
+
+  return (
+    <div style={{ ...S.screen, background: theme.bg }}>
+      <ModalHeader
+        theme={theme}
+        title={isNew ? 'Nová kategorie' : 'Upravit kategorii'}
+        onBack={onBack}
+        onAction={!isNew ? () => setConfirmDelete(true) : undefined}
+        actionIcon={!isNew ? Icon.Trash : undefined}
+        actionVariant="danger"
+      />
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Název kategorie</div>
+        <input
+          style={{ ...S.textInput, background: theme.surface, border: `1px solid ${theme.border}`, color: theme.text, backdropFilter: theme.blur }}
+          placeholder="např. Jeřáby" value={name} onChange={e => setName(e.target.value)}
+        />
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Náhled</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 22, padding: '13px 16px', background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 14 }}>
+          {IconPreview ? <IconPreview size={18} weight="fill" /> : <div style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px dashed ${theme.textFaint}` }} />}
+          <span style={{ fontSize: 15, fontWeight: 700, color: color || theme.text }}>{name.trim() || 'Název kategorie'}</span>
+        </div>
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Barva</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 22 }}>
+          <button
+            onClick={() => setColor(null)}
+            title="Žádná barva"
+            style={{
+              width: 38, height: 38, borderRadius: '50%', background: theme.surface, border: !color ? `3px solid ${theme.text}` : `1.5px dashed ${theme.textFaint}`,
+              boxShadow: !color ? `0 0 0 2px ${theme.bg}` : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint,
+            }}
+          >
+            <Icon.X size={14} weight="bold" />
+          </button>
+          {CATEGORY_COLORS.map(c => (
+            <button
+              key={c}
+              onClick={() => setColor(c)}
+              style={{
+                width: 38, height: 38, borderRadius: '50%', background: c, border: color === c ? `3px solid ${theme.text}` : '3px solid transparent',
+                boxShadow: color === c ? `0 0 0 2px ${theme.bg}` : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              {color === c && <Icon.Check size={15} weight="bold" />}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Ikona</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 24 }}>
+          <button
+            onClick={() => setIcon(null)}
+            title="Žádná ikona"
+            style={{
+              aspectRatio: '1', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: !icon ? theme.primarySoft : theme.surface, border: `1.5px solid ${!icon ? theme.primary : theme.border}`,
+              color: !icon ? theme.primary : theme.textDim,
+            }}
+          >
+            <Icon.X size={17} weight="bold" />
+          </button>
+          {CATEGORY_ICONS.map(iconKey => {
+            const IconComp = Icon[iconKey];
+            const active = icon === iconKey;
+            return (
+              <button
+                key={iconKey}
+                onClick={() => setIcon(iconKey)}
+                style={{
+                  aspectRatio: '1', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: active ? `${color}26` : theme.surface, border: `1.5px solid ${active ? color : theme.border}`,
+                  color: active ? color : theme.textDim,
+                }}
+              >
+                <IconComp size={19} />
+              </button>
+            );
+          })}
+        </div>
       </div>
+
+      <div style={{ padding: '14px 20px', borderTop: `1px solid ${theme.border}`, background: theme.bg }}>
+        <button onClick={save} disabled={!name.trim()} style={{ width: '100%', background: name.trim() ? `linear-gradient(155deg, ${theme.primary} 0%, #4338CA 100%)` : theme.surfaceElevated, border: 'none', borderRadius: 14, padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: name.trim() ? '#fff' : theme.textFaint, fontSize: 16, fontWeight: 700 }}>
+          <Icon.Check size={18} />
+          <span>{isNew ? 'Vytvořit kategorii' : 'Uložit změny'}</span>
+        </button>
+      </div>
+
+      {confirmDelete && (
+        <div onClick={() => setConfirmDelete(false)} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 50 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: theme.surfaceSolid, border: `1px solid ${theme.borderStrong}`, borderRadius: 20, padding: 22, width: '100%', maxWidth: 320, boxShadow: theme.shadow }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: theme.text, marginBottom: 4 }}>Smazat kategorii?</div>
+            <div style={{ fontSize: 13, color: theme.textDim, marginBottom: 18, lineHeight: 1.5 }}>Stroje v této kategorii se přesunou do Nezařazené. Tato akce se nedá vrátit.</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setConfirmDelete(false)} style={{ flex: 1, background: theme.surfaceElevated, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '12px', color: theme.text, fontWeight: 600 }}>Zrušit</button>
+              <button onClick={performDelete} style={{ flex: 1, background: theme.em, border: 'none', borderRadius: 12, padding: '12px', color: '#fff', fontWeight: 700 }}>Smazat</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Formulář pro vytvoření/editaci stroje: název, zařazení do kategorie,
+// poznámky a fotky (stejné ikony jako u zápisu opravy).
+function MachineFormScreen({ theme, db, machine, onBack, onSaved, onDeleted }) {
+  const isNew = !machine;
+  const [name, setName] = useState(machine?.name || '');
+  const [categoryId, setCategoryId] = useState(machine?.categoryId || null);
+  const [icon, setIcon] = useState(machine?.icon || null);
+  const [color, setColor] = useState(machine?.color || null);
+  const [notes, setNotes] = useState(machine?.notes || '');
+  const [photos, setPhotos] = useState(machine?.photos || []);
+  const [categories, setCategories] = useState([]);
+  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(null);
+  const fileInputRef = useRef(null);
+  const galleryInputRef = useRef(null);
+
+  useEffect(() => { db.getAll('categories').then(setCategories); }, [db]);
+
+  const selectedCategory = categories.find(c => c.id === categoryId) || null;
+  const IconPreview = icon ? Icon[icon] : null;
+
+  function handleFiles(e) {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    Promise.all(files.map(file => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    }))).then(dataUrls => setPhotos(prev => [...prev, ...dataUrls]));
+    e.target.value = '';
+  }
+
+  function removePhoto(idx) {
+    setPhotos(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  async function save() {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const record = {
+      id: machine?.id || uid(),
+      name: trimmed, categoryId, icon, color, notes: notes.trim(), photos,
+      order: machine?.order ?? Date.now(),
+      createdAt: machine?.createdAt || Date.now(),
+      lastUsed: machine?.lastUsed || Date.now(),
+    };
+    await db.put('machines', record);
+    onSaved(record);
+  }
+
+  async function performDelete() {
+    if (!machine) return;
+    await db.delete('machines', machine.id);
+    onDeleted();
+  }
+
+  return (
+    <div style={{ ...S.screen, background: theme.bg }}>
+      <ModalHeader
+        theme={theme}
+        title={isNew ? 'Nový stroj' : 'Upravit stroj'}
+        onBack={onBack}
+        onAction={!isNew ? () => setConfirmDelete(true) : undefined}
+        actionIcon={!isNew ? Icon.Trash : undefined}
+        actionVariant="danger"
+      />
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Název stroje</div>
+        <input
+          style={{ ...S.textInput, background: theme.surface, border: `1px solid ${theme.border}`, color: theme.text, backdropFilter: theme.blur }}
+          placeholder="např. Jeřáb SLUSH02" value={name} onChange={e => setName(e.target.value)}
+        />
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Kategorie</div>
+        <div style={{ position: 'relative', marginBottom: 22 }}>
+          <button
+            onClick={() => setShowCategoryMenu(v => !v)}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 14, padding: '13px 16px', backdropFilter: theme.blur }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {selectedCategory ? (
+                <>
+                  {selectedCategory.icon && Icon[selectedCategory.icon] && React.createElement(Icon[selectedCategory.icon], { size: 16 })}
+                  <span style={{ fontSize: 15, fontWeight: 600, color: selectedCategory.color || theme.text }}>{selectedCategory.name}</span>
+                </>
+              ) : (
+                <span style={{ fontSize: 15, fontWeight: 600, color: theme.textFaint }}>Nezařazené</span>
+              )}
+            </div>
+            <Icon.ChevronRight size={16} />
+          </button>
+          {showCategoryMenu && (
+            <>
+              <div onClick={() => setShowCategoryMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 39 }} />
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 6, zIndex: 40, background: theme.surfaceSolid,
+                border: `1px solid ${theme.borderStrong}`, borderRadius: 14, padding: 6, boxShadow: theme.shadow, maxHeight: 260, overflowY: 'auto',
+              }}>
+                <button
+                  onClick={() => { setCategoryId(null); setShowCategoryMenu(false); }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '10px 10px', borderRadius: 9, background: !categoryId ? theme.primarySoft : 'none', border: 'none', color: !categoryId ? theme.primary : theme.text, fontSize: 14, fontWeight: 600 }}
+                >
+                  <span>Nezařazené</span>
+                  {!categoryId && <Icon.Check size={14} weight="bold" />}
+                </button>
+                {categories.map(c => {
+                  const CIcon = c.icon && Icon[c.icon];
+                  const active = categoryId === c.id;
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => { setCategoryId(c.id); setShowCategoryMenu(false); }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '10px 10px', borderRadius: 9, background: active ? `${c.color}1F` : 'none', border: 'none', color: active ? c.color : theme.text, fontSize: 14, fontWeight: 600 }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {CIcon && <CIcon size={15} />}
+                        <span>{c.name}</span>
+                      </div>
+                      {active && <Icon.Check size={14} weight="bold" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Náhled</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 22, padding: '13px 16px', background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 14 }}>
+          {IconPreview ? (
+            <div style={{ color: color || theme.textDim, display: 'flex' }}>
+              <IconPreview size={18} weight="fill" />
+            </div>
+          ) : (
+            <div style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px dashed ${theme.textFaint}` }} />
+          )}
+          <span style={{ fontSize: 15, fontWeight: 700, color: theme.text }}>{name.trim() || 'Název stroje'}</span>
+        </div>
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Barva</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 22 }}>
+          <button
+            onClick={() => setColor(null)}
+            title="Žádná barva"
+            style={{
+              width: 38, height: 38, borderRadius: '50%', background: theme.surface, border: !color ? `3px solid ${theme.text}` : `1.5px dashed ${theme.textFaint}`,
+              boxShadow: !color ? `0 0 0 2px ${theme.bg}` : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint,
+            }}
+          >
+            <Icon.X size={14} weight="bold" />
+          </button>
+          {CATEGORY_COLORS.map(c => (
+            <button
+              key={c}
+              onClick={() => setColor(c)}
+              style={{
+                width: 38, height: 38, borderRadius: '50%', background: c, border: color === c ? `3px solid ${theme.text}` : '3px solid transparent',
+                boxShadow: color === c ? `0 0 0 2px ${theme.bg}` : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              {color === c && <Icon.Check size={15} weight="bold" style={{ color: '#fff' }} />}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Ikona</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 24 }}>
+          <button
+            onClick={() => setIcon(null)}
+            title="Žádná ikona"
+            style={{
+              aspectRatio: '1', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: !icon ? theme.primarySoft : theme.surface, border: `1.5px solid ${!icon ? theme.primary : theme.border}`,
+              color: !icon ? theme.primary : theme.textDim,
+            }}
+          >
+            <Icon.X size={17} weight="bold" />
+          </button>
+          {MACHINE_ICONS.map(iconKey => {
+            const IconComp = Icon[iconKey];
+            const active = icon === iconKey;
+            return (
+              <button
+                key={iconKey}
+                onClick={() => setIcon(iconKey)}
+                style={{
+                  aspectRatio: '1', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: active ? `${(color || theme.primary)}26` : theme.surface, border: `1.5px solid ${active ? (color || theme.primary) : theme.border}`,
+                  color: active ? (color || theme.primary) : theme.textDim,
+                }}
+              >
+                <IconComp size={19} />
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Poznámky</div>
+        <textarea
+          style={{ ...S.textArea, background: theme.surface, border: `1px solid ${theme.border}`, color: theme.text, backdropFilter: theme.blur }}
+          placeholder="Např. sériové číslo, umístění, servisní poznámky..." value={notes} onChange={e => setNotes(e.target.value)} rows={4}
+        />
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Fotky</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
+          {photos.map((p, i) => (
+            <div key={i} style={{ position: 'relative', width: 72, height: 72 }}>
+              <img src={p} onClick={() => setLightboxIndex(i)} style={{ width: 72, height: 72, borderRadius: 12, objectFit: 'cover', border: `1px solid ${theme.border}`, cursor: 'pointer' }} />
+              <button onClick={() => removePhoto(i)} style={{ position: 'absolute', top: -6, right: -6, width: 22, height: 22, borderRadius: '50%', background: theme.em, border: `2px solid ${theme.bg}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}><Icon.X size={12} /></button>
+            </div>
+          ))}
+          <button onClick={() => fileInputRef.current?.click()} style={{ width: 72, height: 72, borderRadius: 12, background: theme.surface, border: `1.5px dashed ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, backdropFilter: theme.blur }}>
+            <Icon.Camera size={20} />
+          </button>
+          <button onClick={() => galleryInputRef.current?.click()} style={{ width: 72, height: 72, borderRadius: 12, background: theme.surface, border: `1.5px dashed ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, backdropFilter: theme.blur }}>
+            <Icon.Image size={20} />
+          </button>
+        </div>
+        <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleFiles} />
+        <input ref={galleryInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFiles} />
+        <div style={{ height: 12 }} />
+      </div>
+
+      <div style={{ padding: '14px 20px', borderTop: `1px solid ${theme.border}`, background: theme.bg }}>
+        <button onClick={save} disabled={!name.trim()} style={{ width: '100%', background: name.trim() ? `linear-gradient(155deg, ${theme.primary} 0%, #4338CA 100%)` : theme.surfaceElevated, border: 'none', borderRadius: 14, padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: name.trim() ? '#fff' : theme.textFaint, fontSize: 16, fontWeight: 700 }}>
+          <Icon.Check size={18} />
+          <span>{isNew ? 'Vytvořit stroj' : 'Uložit změny'}</span>
+        </button>
+      </div>
+
+      {lightboxIndex !== null && photos[lightboxIndex] && (
+        <div onClick={() => setLightboxIndex(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }}>
+          <button onClick={() => setLightboxIndex(null)} style={{ position: 'absolute', top: 16, right: 16, width: 42, height: 42, borderRadius: 12, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+            <Icon.X size={20} weight="bold" />
+          </button>
+          <img src={photos[lightboxIndex]} onClick={(e) => e.stopPropagation()} style={{ maxWidth: '92vw', maxHeight: '86vh', objectFit: 'contain', borderRadius: 8 }} />
+        </div>
+      )}
+
+      {confirmDelete && (
+        <div onClick={() => setConfirmDelete(false)} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 50 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: theme.surfaceSolid, border: `1px solid ${theme.borderStrong}`, borderRadius: 20, padding: 22, width: '100%', maxWidth: 320, boxShadow: theme.shadow }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: theme.text, marginBottom: 4 }}>Smazat stroj?</div>
+            <div style={{ fontSize: 13, color: theme.textDim, marginBottom: 18, lineHeight: 1.5 }}>Existující záznamy oprav zůstanou zachovány, jen si tento stroj nebude možné vybrat pro nové opravy. Tato akce se nedá vrátit.</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setConfirmDelete(false)} style={{ flex: 1, background: theme.surfaceElevated, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '12px', color: theme.text, fontWeight: 600 }}>Zrušit</button>
+              <button onClick={performDelete} style={{ flex: 1, background: theme.em, border: 'none', borderRadius: 12, padding: '12px', color: '#fff', fontWeight: 700 }}>Smazat</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2444,17 +3271,15 @@ function GalleryScreen({ theme, db, refreshTick, onOpenRecord, columns, onColumn
                           style={{ position: 'relative', width: '100%', height: '100%', borderRadius: 10, overflow: 'hidden', background: theme.surface, border: 'none', userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'manipulation' }}
                         >
                           <img src={item.url} draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }} />
-                          {columns <= 3 && (
-                            <div style={{
-                              position: 'absolute', left: 0, right: 0, bottom: 0,
-                              background: 'linear-gradient(to top, rgba(0,0,0,0.75), transparent)',
-                              padding: '14px 6px 5px',
-                            }}>
-                              <div style={{ fontSize: 10, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {item.record.machineName}
-                              </div>
+                          <div style={{
+                            position: 'absolute', left: 0, right: 0, bottom: 0,
+                            background: 'linear-gradient(to top, rgba(0,0,0,0.75), transparent)',
+                            padding: columns <= 3 ? '14px 6px 5px' : '10px 4px 4px',
+                          }}>
+                            <div style={{ fontSize: columns <= 3 ? 10 : 8.5, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {item.record.machineName}
                             </div>
-                          )}
+                          </div>
                         </button>
                         {selectionMode && (
                           <button
