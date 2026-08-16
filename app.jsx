@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.9';
+const APP_VERSION = '6.10';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -1058,7 +1058,7 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, refre
           onClick={() => setYear(y => y - 1)}
           style={{ width: 36, height: 36, borderRadius: 10, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, backdropFilter: theme.blur }}
         ><Icon.Back size={17} /></button>
-        <span style={{ fontSize: 20, fontWeight: 800, color: year === new Date().getFullYear() ? theme.primary : theme.text, minWidth: 64, textAlign: 'center' }}>{year}</span>
+        <span style={{ fontSize: 20, fontWeight: 800, color: year === new Date().getFullYear() ? theme.text : theme.textDim, minWidth: 64, textAlign: 'center' }}>{year}</span>
         <button
           onClick={() => setYear(y => y + 1)}
           style={{ width: 36, height: 36, borderRadius: 10, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, backdropFilter: theme.blur }}
@@ -1103,7 +1103,7 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, refre
                   opacity: isFuture && !hasData ? 0.5 : 1,
                 }}
               >
-                <div style={{ fontSize: 14, fontWeight: 700, color: isCurrentMonth ? theme.primary : theme.text, textTransform: 'capitalize', marginBottom: hasData ? 8 : 0 }}>{name}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: isCurrentMonth ? theme.text : theme.textDim, textTransform: 'capitalize', marginBottom: hasData ? 8 : 0 }}>{name}</div>
                 {hasData ? (
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     {data.cm > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.cm }}>{data.cm} CM</span>}
@@ -1200,7 +1200,7 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
           onClick={() => onNavigateMonth(shiftMonthKey(monthKey, -1))}
           style={{ width: 36, height: 36, borderRadius: 10, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, backdropFilter: theme.blur }}
         ><Icon.Back size={17} /></button>
-        <span style={{ fontSize: 18, fontWeight: 800, color: isCurrentMonth ? theme.primary : theme.text, minWidth: 150, textAlign: 'center', textTransform: 'capitalize' }}>{fmtMonthLabel(monthKey)}</span>
+        <span style={{ fontSize: 18, fontWeight: 800, color: isCurrentMonth ? theme.text : theme.textDim, minWidth: 150, textAlign: 'center', textTransform: 'capitalize' }}>{fmtMonthLabel(monthKey)}</span>
         <button
           onClick={() => onNavigateMonth(shiftMonthKey(monthKey, 1))}
           style={{ width: 36, height: 36, borderRadius: 10, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, backdropFilter: theme.blur }}
@@ -1261,7 +1261,7 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
                     backdropFilter: theme.blur,
                   }}
                 >
-                  <span style={{ fontSize: 14, fontWeight: isToday ? 800 : 600, color: isToday ? theme.primary : theme.text }}>{day}</span>
+                  <span style={{ fontSize: 14, fontWeight: isToday ? 800 : 600, color: isToday ? theme.text : theme.textDim }}>{day}</span>
                   <div style={{ display: 'flex', gap: 3, height: 5 }}>
                     {dots.map((c, i) => <div key={i} style={{ width: 5, height: 5, borderRadius: '50%', background: c }} />)}
                   </div>
