@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.5';
+const APP_VERSION = '6.9';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -246,8 +246,24 @@ const Icon = {
   MachSparkle: phosphorIcon('sparkle'),
   MachStamp: phosphorIcon('stamp'),
   MachCarousel: phosphorIcon('gear-six'),
-  DragHandle: phosphorIcon('dots-six-vertical'),
-  SortAlpha: phosphorIcon('sort-ascending'),
+  // Další technické ikony vztahující se k údržbě/továrně, sdílené jak pro
+  // kategorie, tak pro jednotlivé stroje.
+  TechHammer: phosphorIcon('hammer'),
+  TechScrewdriver: phosphorIcon('screwdriver'),
+  TechNut: phosphorIcon('nut'),
+  TechHardHat: phosphorIcon('hard-hat'),
+  TechClipboard: phosphorIcon('clipboard-text'),
+  TechWarehouse: phosphorIcon('warehouse'),
+  TechCrane: phosphorIcon('crane'),
+  TechBattery: phosphorIcon('battery-charging-vertical'),
+  TechThermometer: phosphorIcon('thermometer'),
+  TechRuler: phosphorIcon('ruler'),
+  TechPlug: phosphorIcon('plug'),
+  TechPlugsConnected: phosphorIcon('plugs-connected'),
+  TechShield: phosphorIcon('shield-check'),
+  TechFirstAid: phosphorIcon('first-aid-kit'),
+  TechBulb: phosphorIcon('lightbulb'),
+  TechSiren: phosphorIcon('siren'),
 };
 
 // ============================================================
@@ -291,24 +307,37 @@ const CM_SUBTYPES = {
 };
 
 // Sada volitelných ikon pro kategorie strojů — klíč se ukládá do category.icon.
-const CATEGORY_ICONS = [
+// Sdílená sada volitelných ikon pro kategorie i jednotlivé stroje — obojí
+// nabízí stejný výběr, ať jde snadno vizuálně sladit stroj s jeho kategorií.
+// Sparkle zastupuje svařování (jiskry) a gear-six "kolotoč" — Phosphor nemá
+// přesné ekvivalenty pro tyto dva pojmy. Všechny lze obarvit přes currentColor.
+const SHARED_ICONS = [
   'CatGear', 'CatBolt', 'CatDrop', 'CatFlame', 'CatFan', 'CatEngine',
   'CatTruck', 'CatFactory', 'CatBox', 'CatCircuit', 'CatGauge', 'CatToolbox',
   'CatBuilding', 'CatConveyor', 'CatFolder', 'CatStar',
-];
-
-// Sada volitelných ikon pro jednotlivé stroje — Sparkle zastupuje svařování
-// (jiskry) a gear-six "kolotoč" (Phosphor nemá přesné ekvivalenty pro tyto
-// dva pojmy), obojí lze obarvit stejně jako ostatní ikony přes currentColor.
-const MACHINE_ICONS = [
   'MachStroj', 'MachTable', 'MachCamera', 'MachFlame', 'MachSparkle', 'MachStamp', 'MachCarousel',
+  'TechHammer', 'TechScrewdriver', 'TechNut', 'TechHardHat', 'TechClipboard',
+  'TechWarehouse', 'TechCrane', 'TechBattery', 'TechThermometer', 'TechRuler',
+  'TechPlug', 'TechPlugsConnected', 'TechShield', 'TechFirstAid', 'TechBulb', 'TechSiren',
 ];
 
-// Paleta barev pro kategorie — hex hodnoty voleny tak, aby fungovaly čitelně
-// jak na tmavém, tak na světlém pozadí (dostatečně sytá, ne pastelová).
+// Paleta barev pro kategorie — čistě odstíny appce vlastní fialové (accent
+// barvy), od světlé levandulové po tmavou indigo. Kategorie tak vždy ladí
+// s celkovým vzhledem appky, jen s různou intenzitou pro odlišení.
 const CATEGORY_COLORS = [
+  '#b1a8e6', '#9d90e0', '#8c7edd', '#796bc7', '#6b59cf',
+  '#5340bf', '#4230a6', '#392a94', '#32238b', '#24176d',
+  '#a398e1', '#7b6cd0', '#6251c2', '#6e60be', '#867cc0',
+  '#4a33cc', '#9489d2', '#584bb8', '#5f4fc2', '#7267c4',
+];
+
+// Paleta barev pro stroje — širší a pestřejší, ať jde vizuálně rozlišit víc
+// různých typů strojů napříč barevným spektrem.
+const MACHINE_COLORS = [
   '#9184d9', '#60d291', '#e4b750', '#ff6976', '#5aa9e6',
   '#e67ea3', '#7fd4c1', '#d99a5a', '#8b8fa3', '#c17ee6',
+  '#f2994a', '#56ccf2', '#eb5757', '#27ae60', '#bb6bd9',
+  '#2f80ed', '#f2c94c', '#219653', '#6fcf97', '#828282',
 ];
 
 const UNCATEGORIZED_ID = '__uncategorized__';
@@ -1029,16 +1058,10 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, refre
           onClick={() => setYear(y => y - 1)}
           style={{ width: 36, height: 36, borderRadius: 10, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, backdropFilter: theme.blur }}
         ><Icon.Back size={17} /></button>
-        <span style={{ fontSize: 20, fontWeight: 800, color: theme.text, minWidth: 64, textAlign: 'center' }}>{year}</span>
+        <span style={{ fontSize: 20, fontWeight: 800, color: year === new Date().getFullYear() ? theme.primary : theme.text, minWidth: 64, textAlign: 'center' }}>{year}</span>
         <button
           onClick={() => setYear(y => y + 1)}
-          disabled={year >= new Date().getFullYear()}
-          style={{
-            width: 36, height: 36, borderRadius: 10, background: theme.surface, border: `1px solid ${theme.border}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: theme.blur,
-            color: year >= new Date().getFullYear() ? theme.textFaint : theme.text,
-            opacity: year >= new Date().getFullYear() ? 0.4 : 1,
-          }}
+          style={{ width: 36, height: 36, borderRadius: 10, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, backdropFilter: theme.blur }}
         ><Icon.ChevronRight size={17} /></button>
       </div>
 
@@ -1067,25 +1090,26 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, refre
             const monthNum = idx + 1;
             const data = monthsInYear[monthNum];
             const hasData = !!data;
-            const isFuture = year === new Date().getFullYear() && monthNum > new Date().getMonth() + 1;
+            const now = new Date();
+            const isFuture = year === now.getFullYear() && monthNum > now.getMonth() + 1;
+            const isCurrentMonth = year === now.getFullYear() && monthNum === now.getMonth() + 1;
             return (
               <button
                 key={monthNum}
-                disabled={isFuture}
                 onClick={() => onOpenMonth(`${year}-${pad(monthNum)}`)}
                 style={{
-                  background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 16,
-                  padding: '14px 14px', textAlign: 'left', backdropFilter: theme.blur,
-                  opacity: isFuture ? 0.35 : 1,
+                  background: theme.surface, border: `${isCurrentMonth ? 2 : 1}px solid ${isCurrentMonth ? theme.primary : theme.border}`, borderRadius: 16,
+                  padding: isCurrentMonth ? '13px 13px' : '14px 14px', textAlign: 'left', backdropFilter: theme.blur,
+                  opacity: isFuture && !hasData ? 0.5 : 1,
                 }}
               >
-                <div style={{ fontSize: 14, fontWeight: 700, color: theme.text, textTransform: 'capitalize', marginBottom: hasData ? 8 : 0 }}>{name}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: isCurrentMonth ? theme.primary : theme.text, textTransform: 'capitalize', marginBottom: hasData ? 8 : 0 }}>{name}</div>
                 {hasData ? (
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     {data.cm > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.cm }}>{data.cm} CM</span>}
                     {data.em > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.em }}>{data.em} EM</span>}
                   </div>
-                ) : !isFuture && (
+                ) : (
                   <div style={{ fontSize: 11, color: theme.textFaint }}>bez záznamů</div>
                 )}
               </button>
@@ -1101,7 +1125,7 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, refre
 // ============================================================
 // MONTH SCREEN — dny v měsíci s opravami
 // ============================================================
-function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddRecord, refreshTick }) {
+function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddRecord, refreshTick, onNavigateMonth }) {
   const [records, setRecords] = useState([]);
 
   const load = useCallback(async () => {
@@ -1158,12 +1182,32 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
 
   const todayKey = fmtDateKey(Date.now());
   const weekdayLabels = ['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'];
+  const isCurrentMonth = monthKey === fmtMonthKey(Date.now());
+
+  // Sousední měsíc jako "YYYY-MM" klíč, pro šipky doleva/doprava.
+  function shiftMonthKey(key, delta) {
+    const [y, m] = key.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+  }
 
   return (
     <div style={{ ...S.screen, background: theme.bg }}>
-      <ModalHeader theme={theme} title={fmtMonthLabel(monthKey)} onBack={onBack} onHome={onHome} onAction={() => onAddRecord(defaultDateForMonth())} actionIcon={Icon.Plus} />
+      <ModalHeader theme={theme} title="Měsíc" onBack={onBack} onHome={onHome} onAction={() => onAddRecord(defaultDateForMonth())} actionIcon={Icon.Plus} />
 
-      <div style={{ display: 'flex', gap: 10, padding: '16px 20px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '14px 20px 4px' }}>
+        <button
+          onClick={() => onNavigateMonth(shiftMonthKey(monthKey, -1))}
+          style={{ width: 36, height: 36, borderRadius: 10, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, backdropFilter: theme.blur }}
+        ><Icon.Back size={17} /></button>
+        <span style={{ fontSize: 18, fontWeight: 800, color: isCurrentMonth ? theme.primary : theme.text, minWidth: 150, textAlign: 'center', textTransform: 'capitalize' }}>{fmtMonthLabel(monthKey)}</span>
+        <button
+          onClick={() => onNavigateMonth(shiftMonthKey(monthKey, 1))}
+          style={{ width: 36, height: 36, borderRadius: 10, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, backdropFilter: theme.blur }}
+        ><Icon.ChevronRight size={17} /></button>
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, padding: '10px 20px 12px' }}>
         <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
           <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.cm }}>{monthStats.cm}</div>
           <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>CM</div>
@@ -1179,6 +1223,10 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 16px 20px' }}>
+        <div style={{
+          border: isCurrentMonth ? `1.5px solid ${theme.primary}44` : '1.5px solid transparent',
+          borderRadius: 16, padding: isCurrentMonth ? 8 : 0,
+        }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, marginBottom: 6 }}>
           {weekdayLabels.map((label, i) => (
             <div key={label} style={{
@@ -1222,6 +1270,7 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
             })}
           </div>
         ))}
+        </div>
       </div>
     </div>
   );
@@ -1935,6 +1984,8 @@ function App() {
   const [machineColumns, setMachineColumns] = useState(3);
   const stackRef = useRef(stack);
   stackRef.current = stack;
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
   const { mode, setMode, theme, resolvedName: resolvedThemeName } = useTheme();
 
   const route = stack[stack.length - 1];
@@ -1955,7 +2006,32 @@ function App() {
   }, []);
 
   useEffect(() => {
-    function onPop() { setStack(s => (s.length > 1 ? s.slice(0, -1) : s)); }
+    // Appka potřebuje aspoň dvě vrstvy v historii prohlížeče hned od startu,
+    // jinak první stisk tlačítka/gesta zpět nezachytí náš popstate handler
+    // vůbec — prohlížeč appku rovnou opustí, protože žádná "předchozí" vrstva
+    // uvnitř appky neexistuje. Tahle extra vrstva se spotřebuje při prvním
+    // popstate z kteréhokoli kořene — proto onPop na Timer kořenu musí sám
+    // znovu poslat historii zpět (history.back()), aby "zpět" appku skutečně
+    // opustilo na první stisk, ne až na druhý.
+    window.history.replaceState({ depth: 1 }, '');
+    window.history.pushState({ depth: 1 }, '');
+
+    function onPop() {
+      setStack(s => {
+        if (s.length > 1) return s.slice(0, -1);
+        if (activeTabRef.current !== 'timer') {
+          // Na kořenu jiné záložky: "zpět" přepne na Timer místo opuštění appky.
+          setActiveTab('timer');
+          window.history.pushState({ depth: 1 }, '');
+          return [{ screen: 'home' }];
+        }
+        // Na kořenu Timeru: necháváme appku standardně opustit — o vrstvu
+        // navíc z inicializace se appka zbaví tím, že pošle historii ještě
+        // jednou zpět, což prohlížeč/systém interpretuje jako opuštění appky.
+        window.history.back();
+        return s;
+      });
+    }
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
@@ -1981,6 +2057,14 @@ function App() {
     } else {
       setStack(s => (s.length > n ? s.slice(0, -n) : [s[0]]));
     }
+  }
+
+  // Nahradí parametry aktuální (poslední) položky v navigačním zásobníku, beze
+  // změny hloubky historie prohlížeče — používá se při procházení měsíců
+  // šipkami uvnitř MonthScreen, ať "zpět" z vnořeného Dne vede na ten měsíc,
+  // který je právě zobrazený, ne na ten, kterým appka na MonthScreen vstoupila.
+  function replaceTop(params) {
+    setStack(s => [...s.slice(0, -1), { ...s[s.length - 1], ...params }]);
   }
 
   function resetToHome() { setStack([{ screen: 'home' }]); }
@@ -2201,7 +2285,7 @@ function App() {
           <YearScreen theme={theme} db={db} onBack={atRoot ? undefined : () => pop(1)} onHome={() => switchTab('timer')} onOpenMonth={(monthKey) => push('month', { monthKey })} onAddRecord={startBackfillWithPicker} refreshTick={refreshTick} />
         )}
         {route.screen === 'month' && (
-          <MonthScreen theme={theme} db={db} monthKey={route.monthKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenDay={(dateKey) => push('day', { dateKey })} onAddRecord={startBackfillWithPicker} refreshTick={refreshTick} />
+          <MonthScreen theme={theme} db={db} monthKey={route.monthKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenDay={(dateKey) => push('day', { dateKey })} onAddRecord={startBackfillWithPicker} refreshTick={refreshTick} onNavigateMonth={(mk) => replaceTop({ monthKey: mk })} />
         )}
         {route.screen === 'day' && (
           <DayScreen theme={theme} db={db} dateKey={route.dateKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenRecord={(r) => push('recordDetail', { record: r })} onAddRecord={startBackfill} refreshTick={refreshTick} />
@@ -2221,8 +2305,8 @@ function TabBar({ theme, activeTab, onSwitch }) {
   const tabs = [
     { key: 'timer', label: 'Timer', icon: Icon.Clock },
     { key: 'history', label: 'Historie', icon: Icon.Calendar },
-    { key: 'machines', label: 'Stroje', icon: Icon.Wrench },
     { key: 'gallery', label: 'Galerie', icon: Icon.Image },
+    { key: 'machines', label: 'Stroje', icon: Icon.Wrench },
   ];
   return (
     <div style={{
@@ -2263,7 +2347,6 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
   const [machines, setMachines] = useState([]);
   const [categories, setCategories] = useState([]);
   const [collapsed, setCollapsed] = useState(() => new Set());
-  const [customOrderMode, setCustomOrderMode] = useState(false);
   const [showColumnsMenu, setShowColumnsMenu] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
   // Vlastní touch-friendly drag-and-drop postavený na Pointer Events, protože
@@ -2294,19 +2377,14 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
       const bucket = m.categoryId && byCategory.has(m.categoryId) ? byCategory.get(m.categoryId) : uncategorized;
       bucket.items.push(m);
     });
-    const sortFn = customOrderMode
-      ? (a, b) => (a.order ?? 0) - (b.order ?? 0)
-      : (a, b) => a.name.localeCompare(b.name, 'cs');
-    const catSortFn = customOrderMode
-      ? (a, b) => (a.order ?? 0) - (b.order ?? 0)
-      : (a, b) => a.name.localeCompare(b.name, 'cs');
+    const sortFn = (a, b) => a.name.localeCompare(b.name, 'cs');
     const list = Array.from(byCategory.values());
     list.forEach(g => g.items.sort(sortFn));
-    list.sort((a, b) => catSortFn(a.category, b.category));
+    list.sort((a, b) => sortFn(a.category, b.category));
     uncategorized.items.sort(sortFn);
     list.push(uncategorized);
     return list;
-  }, [machines, categories, customOrderMode]);
+  }, [machines, categories]);
 
   function toggleCollapse(id) {
     setCollapsed(prev => {
@@ -2336,27 +2414,15 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
     onDataChanged?.();
   }
 
-  async function moveCategory(draggedId, targetCategoryId) {
-    if (draggedId === targetCategoryId) return;
-    const sorted = [...categories].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    const withoutDragged = sorted.filter(c => c.id !== draggedId);
-    const draggedCategory = categories.find(c => c.id === draggedId);
-    if (!draggedCategory) return;
-    const targetIdx = withoutDragged.findIndex(c => c.id === targetCategoryId);
-    withoutDragged.splice(targetIdx === -1 ? withoutDragged.length : targetIdx, 0, draggedCategory);
-    for (let i = 0; i < withoutDragged.length; i++) {
-      await db.put('categories', { ...withoutDragged[i], order: i });
-    }
-    load();
-  }
-
-  // Long-press (250ms) na blok stroje/kategorie v customOrderMode zahájí
-  // tažení. Během tažení sledujeme pointer a přes elementFromPoint zjišťujeme,
-  // nad kterým prvkem (označeným data-drop-key) se prst/kurzor právě nachází.
+  // Long-press (250ms) na blok stroje zahájí jeho tažení mezi kategoriemi.
+  // Během tažení sledujeme pointer a přes elementFromPoint zjišťujeme, nad
+  // kterým prvkem (označeným data-drop-key) se prst/kurzor právě nachází.
+  // Kategorie samotné se nepřetahují — jejich pořadí je vždy abecední.
   const longPressRef = useRef(null);
+  const dragJustFinishedRef = useRef(false);
 
   function startDragTracking(type, id, e) {
-    if (!customOrderMode) return;
+    if (type === 'category') return;
     const point = e.touches ? e.touches[0] : e;
     const startX = point.clientX, startY = point.clientY;
     longPressRef.current = setTimeout(() => {
@@ -2388,7 +2454,12 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
     const state = dragStateRef.current;
     dragStateRef.current = null;
     setDragState(null);
-    if (!state || !state.overKey) return;
+    if (!state) return;
+    // Drag skutečně proběhl (state existoval), takže click event, co po něm
+    // prohlížeč pošle, nemá otevřít detail stroje — jen zavřít krátké okno.
+    dragJustFinishedRef.current = true;
+    setTimeout(() => { dragJustFinishedRef.current = false; }, 50);
+    if (!state.overKey) return;
     const [dropType, dropId] = state.overKey.split(':');
     if (state.type === 'machine') {
       if (dropType === 'group' || dropType === 'category') {
@@ -2398,8 +2469,6 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
         const targetMachine = machines.find(m => m.id === dropId);
         if (targetMachine) await moveMachine(state.id, targetMachine.categoryId || null, dropId);
       }
-    } else if (state.type === 'category' && dropType === 'category' && dropId !== state.id) {
-      await moveCategory(state.id, dropId);
     }
   }
 
@@ -2442,13 +2511,6 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
               </>
             )}
           </div>
-          <button
-            onClick={() => setCustomOrderMode(v => !v)}
-            title={customOrderMode ? 'Vlastní pořadí' : 'Abecedně'}
-            style={{ width: 42, height: 42, borderRadius: 12, background: customOrderMode ? theme.primarySoft : theme.surface, border: `1px solid ${customOrderMode ? theme.primary : theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: customOrderMode ? theme.primary : theme.textDim, backdropFilter: theme.blur }}
-          >
-            {customOrderMode ? <Icon.DragHandle size={17} /> : <Icon.SortAlpha size={17} />}
-          </button>
           <div style={{ position: 'relative' }}>
             <IconButton theme={theme} onClick={() => setShowColumnsMenu(v => !v)}><Icon.Bar size={18} /></IconButton>
             {showColumnsMenu && (
@@ -2494,7 +2556,7 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
             const groupId = group.category ? group.category.id : UNCATEGORIZED_ID;
             const isCollapsed = collapsed.has(groupId);
             const cat = group.category;
-            const catColor = cat ? cat.color || theme.primary : theme.textFaint;
+            const catColor = cat ? (cat.color || theme.textDim) : theme.textFaint;
             const CatIconComp = cat && cat.icon && Icon[cat.icon] ? Icon[cat.icon] : null;
             // Prázdné "Nezařazené" nezobrazujeme (nemá smysl, není to skutečná
             // kategorie k editaci), ale prázdné skutečné kategorie ZŮSTÁVAJÍ
@@ -2516,11 +2578,7 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
                     border: `1px solid ${dragState?.overKey === `category:${cat?.id}` ? theme.primary : theme.border}`,
                     borderLeft: cat ? `3px solid ${catColor}` : `1px solid ${theme.border}`,
                     backdropFilter: theme.blur,
-                    touchAction: customOrderMode && cat ? 'none' : 'auto',
                   }}
-                  onPointerDown={cat ? (e) => startDragTracking('category', cat.id, e) : undefined}
-                  onPointerUp={cancelDragStart}
-                  onPointerLeave={cancelDragStart}
                 >
                   <button onClick={() => toggleCollapse(groupId)} style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'none', border: 'none', flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', color: theme.textFaint, transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.15s ease' }}>
@@ -2535,7 +2593,6 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
                       {cat ? cat.name : 'Nezařazené'}
                     </span>
                     <span style={{ fontSize: 11.5, color: theme.textFaint, fontWeight: 500 }}>({group.items.length})</span>
-                    {customOrderMode && cat && <Icon.DragHandle size={13} />}
                   </button>
                   {cat && (
                     <button onClick={() => onOpenCategory(cat)} style={{ background: 'none', border: 'none', color: theme.textFaint }}>
@@ -2555,7 +2612,7 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
                         <button
                           key={m.id}
                           data-drop-key={machineDropKey}
-                          onClick={() => { if (!customOrderMode) onOpenMachine(m); }}
+                          onClick={() => { if (!dragJustFinishedRef.current) onOpenMachine(m); }}
                           onPointerDown={(e) => startDragTracking('machine', m.id, e)}
                           onPointerUp={cancelDragStart}
                           onPointerLeave={cancelDragStart}
@@ -2566,7 +2623,7 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
                             border: `1px solid ${isMachineDropTarget ? theme.primary : (mColor ? `${mColor}4A` : theme.border)}`,
                             backdropFilter: theme.blur, textAlign: 'center', boxSizing: 'border-box',
                             opacity: isBeingDragged ? 0.4 : 1,
-                            touchAction: customOrderMode ? 'none' : 'auto',
+                            touchAction: 'none',
                           }}
                         >
                           {MIconComp && (
@@ -2705,7 +2762,7 @@ function CategoryFormScreen({ theme, db, category, onBack, onSaved, onDeleted })
           >
             <Icon.X size={17} weight="bold" />
           </button>
-          {CATEGORY_ICONS.map(iconKey => {
+          {SHARED_ICONS.map(iconKey => {
             const IconComp = Icon[iconKey];
             const active = icon === iconKey;
             return (
@@ -2901,7 +2958,7 @@ function MachineFormScreen({ theme, db, machine, onBack, onSaved, onDeleted }) {
           >
             <Icon.X size={14} weight="bold" />
           </button>
-          {CATEGORY_COLORS.map(c => (
+          {MACHINE_COLORS.map(c => (
             <button
               key={c}
               onClick={() => setColor(c)}
@@ -2928,7 +2985,7 @@ function MachineFormScreen({ theme, db, machine, onBack, onSaved, onDeleted }) {
           >
             <Icon.X size={17} weight="bold" />
           </button>
-          {MACHINE_ICONS.map(iconKey => {
+          {SHARED_ICONS.map(iconKey => {
             const IconComp = Icon[iconKey];
             const active = icon === iconKey;
             return (
