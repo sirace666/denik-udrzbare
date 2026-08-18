@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.14';
+const APP_VERSION = '6.15';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -489,7 +489,7 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
       </div>
 
       {activeSession ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '10px 22px 22px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '10px 22px 22px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: 196 }}>
             <button
               onClick={() => cameraInputRef.current?.click()}
@@ -530,7 +530,7 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
           </button>
         </div>
       ) : (
-        <button style={{ ...S.historyLink, color: theme.textDim }} onClick={onOpenToday}>
+        <button style={{ ...S.historyLink, color: theme.textDim, flexShrink: 0 }} onClick={onOpenToday}>
           <span>Dnešní opravy</span>
           <Icon.ChevronRight size={17} />
         </button>
