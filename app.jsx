@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.19';
+const APP_VERSION = '6.20';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -480,7 +480,7 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
           <span style={S.mainButtonLabel}>{activeSession ? 'STOP' : 'START'}</span>
         </button>
 
-        <div style={{ marginTop: 16, minHeight: activeSession ? 70 : 96, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div style={{ marginTop: 16, minHeight: 96, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           {activeSession ? (
             <>
               <div style={{ ...S.timerLabel, color: theme.em }}>PRÁCE PROBÍHÁ OD {fmtTime(activeSession.startTime)}</div>
@@ -495,7 +495,7 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
       </div>
 
       {activeSession ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '0px 22px 12px', flexShrink: 0 }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 76, padding: '0 22px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: 196 }}>
             <button
               onClick={() => cameraInputRef.current?.click()}
@@ -530,17 +530,17 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
             <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleSessionFiles} />
             <input ref={galleryInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleSessionFiles} />
           </div>
-          <button style={{ ...S.historyLink, color: theme.textDim, padding: '0' }} onClick={onOpenToday}>
-            <span>Dnešní opravy</span>
-            <Icon.ChevronRight size={17} />
-          </button>
         </div>
       ) : (
-        <button style={{ ...S.historyLink, color: theme.textDim, flexShrink: 0 }} onClick={onOpenToday}>
+        <div style={{ flex: 1, minHeight: 76 }} />
+      )}
+
+      <div style={{ padding: '0 22px 12px', flexShrink: 0 }}>
+        <button style={{ ...S.historyLink, color: theme.textDim, padding: '0', width: '100%' }} onClick={onOpenToday}>
           <span>Dnešní opravy</span>
           <Icon.ChevronRight size={17} />
         </button>
-      )}
+      </div>
     </div>
   );
 }
@@ -3538,7 +3538,7 @@ const S = {
   homeHeader: { padding: '22px 20px 0' },
   homeHeaderTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
   liveDate: { fontSize: 14, marginTop: 6, textTransform: 'capitalize' },
-  timerWrap: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '0 20px', paddingTop: '10vh' },
+  timerWrap: { flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '0 20px', paddingTop: '10vh' },
   timerLabel: { fontSize: 11.5, letterSpacing: 1.5, fontWeight: 600 },
   timerDisplay: { fontSize: 30, fontWeight: 600, letterSpacing: 0.5, fontVariantNumeric: 'tabular-nums', marginTop: 6 },
   timerIdleLabel: { fontSize: 15, marginBottom: 34, fontWeight: 500 },
