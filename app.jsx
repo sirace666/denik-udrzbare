@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.18';
+const APP_VERSION = '6.19';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -459,7 +459,7 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
         <div style={{ ...S.liveDate, color: theme.textDim, textAlign: 'center', marginBottom: 4 }}>
           {nowDate.toLocaleDateString('cs-CZ', { weekday: 'long', day: 'numeric', month: 'long' })}
         </div>
-        <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 38, fontWeight: 600, color: theme.text, letterSpacing: 0.5, marginBottom: activeSession ? 20 : 32 }}>
+        <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 38, fontWeight: 600, color: theme.text, letterSpacing: 0.5, marginBottom: 24 }}>
           {nowDate.getHours()}:{pad(nowDate.getMinutes())}
         </div>
 
@@ -480,7 +480,7 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
           <span style={S.mainButtonLabel}>{activeSession ? 'STOP' : 'START'}</span>
         </button>
 
-        <div style={{ marginTop: activeSession ? 14 : 22, minHeight: activeSession ? 70 : 96, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div style={{ marginTop: 16, minHeight: activeSession ? 70 : 96, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           {activeSession ? (
             <>
               <div style={{ ...S.timerLabel, color: theme.em }}>PRÁCE PROBÍHÁ OD {fmtTime(activeSession.startTime)}</div>
@@ -495,7 +495,7 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
       </div>
 
       {activeSession ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '4px 22px 16px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '0px 22px 12px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: 196 }}>
             <button
               onClick={() => cameraInputRef.current?.click()}
