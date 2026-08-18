@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.10';
+const APP_VERSION = '6.14';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -433,7 +433,7 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
   }
 
   return (
-    <div style={{ ...S.screen, background: theme.bg }}>
+    <div style={{ ...S.screen, background: theme.bg, overflowY: 'auto' }}>
       <div style={S.homeHeader}>
         <div style={S.homeHeaderTop}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -444,11 +444,9 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
           </div>
           <IconButton theme={theme} onClick={onOpenSettings}><Icon.Settings size={19} /></IconButton>
         </div>
-        {activeSession && (
-          <div style={{ fontSize: 12, color: theme.textFaint, textAlign: 'center', marginTop: 14 }}>
-            Klidně appku zavři, čas běží dál na pozadí
-          </div>
-        )}
+        <div style={{ fontSize: 12, color: theme.textFaint, textAlign: 'center', marginTop: 14, minHeight: 16, visibility: activeSession ? 'visible' : 'hidden' }}>
+          Klidně appku zavři, čas běží dál na pozadí
+        </div>
       </div>
 
       <div style={S.timerWrap}>
@@ -670,6 +668,21 @@ function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored }) {
           <div style={{ fontSize: 13, color: theme.textFaint }}>Verze {APP_VERSION}</div>
           <div style={{ fontSize: 12.5, color: theme.textFaint, marginTop: 8, lineHeight: 1.5 }}>Data se ukládají pouze v tomto zařízení.</div>
         </Card>
+
+        <a
+          href="https://buymeacoffee.com/phantomlabs/e/566888"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12,
+            background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`, borderRadius: 14,
+            padding: '13px', color: theme.text, fontSize: 14, fontWeight: 700, textDecoration: 'none',
+          }}
+        >
+          <span style={{ fontSize: 16 }}>☕</span>
+          <span>Podpoř vývoj appky</span>
+        </a>
+
         <div style={{ height: 24 }} />
       </div>
 
@@ -2349,6 +2362,7 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [showColumnsMenu, setShowColumnsMenu] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const [showTip, setShowTip] = useState(false);
   // Vlastní touch-friendly drag-and-drop postavený na Pointer Events, protože
   // nativní HTML5 Drag and Drop API (draggable/onDragStart/onDrop) nefunguje
   // na dotykových zařízeních — Chrome/Firefox/Samsung Internet pro Android
@@ -2357,6 +2371,21 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
   const [dragState, setDragState] = useState(null); // { type, id, x, y, overKey }
   const dragStateRef = useRef(null);
   const itemRectsRef = useRef(new Map()); // key ("machine:id" | "category:id") -> DOMRect
+
+  // Jednorázová nápověda: stroje založené rychle v pickeru po STOP dostanou
+  // jen jméno a jdou do Nezařazené — nikde jinde se člověk nedozví, že si tu
+  // může doladit ikonu, barvu, kategorii, poznámky a fotky. Ukáže se jen
+  // jednou při prvním vstupu do téhle záložky, pak se zapamatuje v settings.
+  useEffect(() => {
+    db.get('settings', 'machinesTipSeen').then(result => {
+      if (!result) setShowTip(true);
+    }).catch(() => setShowTip(true));
+  }, [db]);
+
+  function dismissTip() {
+    setShowTip(false);
+    db.put('settings', { id: 'machinesTipSeen', seen: true });
+  }
 
   const load = useCallback(async () => {
     const [allMachines, allCategories] = await Promise.all([db.getAll('machines'), db.getAll('categories')]);
@@ -2421,10 +2450,13 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
   const longPressRef = useRef(null);
   const dragJustFinishedRef = useRef(false);
 
+  const dragStartPointRef = useRef(null);
+
   function startDragTracking(type, id, e) {
     if (type === 'category') return;
     const point = e.touches ? e.touches[0] : e;
     const startX = point.clientX, startY = point.clientY;
+    dragStartPointRef.current = { x: startX, y: startY };
     longPressRef.current = setTimeout(() => {
       const state = { type, id, x: startX, y: startY, overKey: null };
       dragStateRef.current = state;
@@ -2433,8 +2465,20 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
     }, 250);
   }
 
+  // Pokud se prst při čekání na long-press posune o víc než pár pixelů,
+  // je to scroll gesto, ne úmysl přetáhnout blok — zrušíme čekající timer,
+  // ať prohlížeč může scrollovat normálně místo zablokování gesta.
+  function handleDragCandidateMove(e) {
+    if (!longPressRef.current || !dragStartPointRef.current) return;
+    const point = e.touches ? e.touches[0] : e;
+    const dx = Math.abs(point.clientX - dragStartPointRef.current.x);
+    const dy = Math.abs(point.clientY - dragStartPointRef.current.y);
+    if (dx > 8 || dy > 8) cancelDragStart();
+  }
+
   function cancelDragStart() {
     if (longPressRef.current) { clearTimeout(longPressRef.current); longPressRef.current = null; }
+    dragStartPointRef.current = null;
   }
 
   function handlePointerMoveGlobal(e) {
@@ -2545,6 +2589,21 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
         </div>
       </div>
 
+      {showTip && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 10, margin: '0 16px 14px',
+          background: theme.primarySoft, border: `1px solid ${theme.primary}44`, borderRadius: 14, padding: '12px 14px',
+        }}>
+          <div style={{ color: theme.primary, flexShrink: 0, marginTop: 1 }}><Icon.MachSparkle size={16} /></div>
+          <div style={{ flex: 1, fontSize: 12.5, color: theme.text, lineHeight: 1.5 }}>
+            Klepnutím na stroj mu můžeš nastavit <strong>ikonu, barvu, kategorii, poznámky i fotky</strong>.
+          </div>
+          <button onClick={dismissTip} style={{ background: 'none', border: 'none', color: theme.textFaint, flexShrink: 0 }}>
+            <Icon.X size={15} />
+          </button>
+        </div>
+      )}
+
       {machines.length === 0 && categories.length === 0 ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 30px', gap: 10 }}>
           <div style={{ color: theme.textFaint }}><Icon.Wrench size={32} /></div>
@@ -2614,6 +2673,7 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
                           data-drop-key={machineDropKey}
                           onClick={() => { if (!dragJustFinishedRef.current) onOpenMachine(m); }}
                           onPointerDown={(e) => startDragTracking('machine', m.id, e)}
+                          onPointerMove={handleDragCandidateMove}
                           onPointerUp={cancelDragStart}
                           onPointerLeave={cancelDragStart}
                           style={{
@@ -2623,7 +2683,7 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
                             border: `1px solid ${isMachineDropTarget ? theme.primary : (mColor ? `${mColor}4A` : theme.border)}`,
                             backdropFilter: theme.blur, textAlign: 'center', boxSizing: 'border-box',
                             opacity: isBeingDragged ? 0.4 : 1,
-                            touchAction: 'none',
+                            touchAction: isBeingDragged ? 'none' : 'pan-y',
                           }}
                         >
                           {MIconComp && (
