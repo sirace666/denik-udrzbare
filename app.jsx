@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.15';
+const APP_VERSION = '6.18';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -434,26 +434,32 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
 
   return (
     <div style={{ ...S.screen, background: theme.bg, overflowY: 'auto' }}>
-      <div style={S.homeHeader}>
-        <div style={S.homeHeaderTop}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 9, background: theme.primarySoft, border: `1px solid ${theme.primary}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.primary, flexShrink: 0 }}>
-              <Icon.Wrench size={16} weight="fill" />
+      <div style={{ position: 'relative' }}>
+        <div style={S.homeHeader}>
+          <div style={S.homeHeaderTop}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 9, background: theme.primarySoft, border: `1px solid ${theme.primary}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.primary, flexShrink: 0 }}>
+                <Icon.Wrench size={16} weight="fill" />
+              </div>
+              <span style={{ fontSize: 15, fontWeight: 600, color: theme.text, whiteSpace: 'nowrap' }}>Deník údržbáře</span>
             </div>
-            <span style={{ fontSize: 15, fontWeight: 600, color: theme.text, whiteSpace: 'nowrap' }}>Deník údržbáře</span>
+            <IconButton theme={theme} onClick={onOpenSettings}><Icon.Settings size={19} /></IconButton>
           </div>
-          <IconButton theme={theme} onClick={onOpenSettings}><Icon.Settings size={19} /></IconButton>
         </div>
-        <div style={{ fontSize: 12, color: theme.textFaint, textAlign: 'center', marginTop: 14, minHeight: 16, visibility: activeSession ? 'visible' : 'hidden' }}>
-          Klidně appku zavři, čas běží dál na pozadí
-        </div>
+        {activeSession && (
+          <div style={{ position: 'absolute', left: 20, right: 20, top: 68, height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ fontSize: 12, color: theme.textFaint, textAlign: 'center' }}>
+              Klidně appku zavři, čas běží dál na pozadí
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={S.timerWrap}>
         <div style={{ ...S.liveDate, color: theme.textDim, textAlign: 'center', marginBottom: 4 }}>
           {nowDate.toLocaleDateString('cs-CZ', { weekday: 'long', day: 'numeric', month: 'long' })}
         </div>
-        <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 38, fontWeight: 600, color: theme.text, letterSpacing: 0.5, marginBottom: 32 }}>
+        <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 38, fontWeight: 600, color: theme.text, letterSpacing: 0.5, marginBottom: activeSession ? 20 : 32 }}>
           {nowDate.getHours()}:{pad(nowDate.getMinutes())}
         </div>
 
@@ -474,7 +480,7 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
           <span style={S.mainButtonLabel}>{activeSession ? 'STOP' : 'START'}</span>
         </button>
 
-        <div style={{ marginTop: 22, minHeight: 96, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div style={{ marginTop: activeSession ? 14 : 22, minHeight: activeSession ? 70 : 96, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           {activeSession ? (
             <>
               <div style={{ ...S.timerLabel, color: theme.em }}>PRÁCE PROBÍHÁ OD {fmtTime(activeSession.startTime)}</div>
@@ -489,7 +495,7 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
       </div>
 
       {activeSession ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '10px 22px 22px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '4px 22px 16px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: 196 }}>
             <button
               onClick={() => cameraInputRef.current?.click()}
@@ -3532,7 +3538,7 @@ const S = {
   homeHeader: { padding: '22px 20px 0' },
   homeHeaderTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
   liveDate: { fontSize: 14, marginTop: 6, textTransform: 'capitalize' },
-  timerWrap: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '0 20px', paddingTop: '14vh' },
+  timerWrap: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '0 20px', paddingTop: '10vh' },
   timerLabel: { fontSize: 11.5, letterSpacing: 1.5, fontWeight: 600 },
   timerDisplay: { fontSize: 30, fontWeight: 600, letterSpacing: 0.5, fontVariantNumeric: 'tabular-nums', marginTop: 6 },
   timerIdleLabel: { fontSize: 15, marginBottom: 34, fontWeight: 500 },

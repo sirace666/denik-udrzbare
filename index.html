@@ -38,7 +38,22 @@
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch(()=>{});
+      navigator.serviceWorker.register('sw.js').then((registration) => {
+        // GitHub Pages posílá cachovací hlavičky i na sw.js, takže prohlížeč
+        // může jeho aktualizaci zjistit až s velkým zpožděním. Vynutíme
+        // kontrolu update při každém otevření appky (update() obchází HTTP
+        // cache pro samotný sw.js request) a jakmile se nová verze aktivuje,
+        // appku rovnou obnovíme, ať se nová verze projeví hned, ne až při
+        // další náhodné návštěvě.
+        registration.update().catch(() => {});
+
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (refreshing) return;
+          refreshing = true;
+          window.location.reload();
+        });
+      }).catch(() => {});
     });
   }
 </script>
