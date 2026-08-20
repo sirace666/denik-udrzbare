@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.20';
+const APP_VERSION = '6.27';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -112,6 +112,17 @@ function fmtDurationShort(ms) {
 function fmtTime(ts) {
   const d = new Date(ts);
   return `${d.getHours()}:${pad(d.getMinutes())}`;
+}
+
+// Zaokrouhlí timestamp na nejbližších 5 minut (matematicky — .5 nahoru),
+// používá se všude, kde appka předvyplňuje aktuální čas (nová oprava,
+// STOP timeru), ať jsou časy konzistentně "hezké" bez sekundové přesnosti.
+function roundToNearest5Min(ts) {
+  const d = new Date(ts);
+  const minutes = d.getMinutes();
+  const rounded = Math.round(minutes / 5) * 5;
+  d.setMinutes(rounded, 0, 0);
+  return d.getTime();
 }
 
 function fmtDateKey(ts) {
@@ -279,6 +290,7 @@ const THEMES = {
     cm: '#60d291', cmSoft: 'rgba(96,210,145,0.16)',
     cmAlt: '#e4b750', cmAltSoft: 'rgba(228,183,80,0.16)',
     em: '#ff6976', emSoft: 'rgba(255,105,118,0.16)',
+    emAlt: '#e6893a', emAltSoft: 'rgba(230,137,58,0.16)',
     shadow: '0 0 0 1px rgba(233,233,237,0.10)', shadowSm: '0 0 0 1px rgba(233,233,237,0.10)',
     blur: 'blur(20px)', overlay: 'rgba(41,43,49,0.55)',
   },
@@ -291,6 +303,7 @@ const THEMES = {
     cm: '#006c37', cmSoft: 'rgba(0,108,55,0.12)',
     cmAlt: '#874f00', cmAltSoft: 'rgba(135,79,0,0.12)',
     em: '#b61537', emSoft: 'rgba(182,21,55,0.12)',
+    emAlt: '#a35414', emAltSoft: 'rgba(163,84,20,0.12)',
     shadow: '0 1px 2px rgba(41,43,49,0.07), 0 1px 1px rgba(41,43,49,0.04)', shadowSm: '0 1px 2px rgba(41,43,49,0.07)',
     blur: 'blur(20px)', overlay: 'rgba(41,43,49,0.4)',
   },
@@ -304,6 +317,11 @@ const TYPES = {
 const CM_SUBTYPES = {
   normal: { label: 'Normální práce', short: 'Normál' },
   oprava: { label: 'Oprava', short: 'Oprava' },
+};
+
+const EM_SUBTYPES = {
+  bezProstoje: { label: 'Bez prostoje', short: 'Bez prostoje' },
+  sProstojem: { label: 'S prostojem', short: 'S prostojem' },
 };
 
 // Sada volitelných ikon pro kategorie strojů — klíč se ukládá do category.icon.
@@ -766,7 +784,7 @@ function MachinePicker({ theme, db, onPick, onCancel }) {
       <div style={{ padding: '16px 20px 8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 14, padding: '13px 16px', color: theme.textFaint, backdropFilter: theme.blur }}>
           <Icon.Search size={18} />
-          <input ref={inputRef} style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: theme.text, fontSize: 16, fontFamily: 'inherit' }} placeholder="Hledat nebo zadat nový název..." value={query} onChange={e => setQuery(e.target.value)} enterKeyHint="done" />
+          <input ref={inputRef} style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: theme.text, fontSize: 16, fontFamily: 'inherit' }} placeholder="Hledat nebo zadat nový název..." value={query} onChange={e => setQuery(e.target.value.toUpperCase())} enterKeyHint="done" />
         </div>
       </div>
 
@@ -828,21 +846,35 @@ function DurationEditor({ theme, valueMs, onChange }) {
 function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel, resolvedThemeName }) {
   const [type, setType] = useState('CM');
   const [cmSubtype, setCmSubtype] = useState('normal');
+  const [emSubtype, setEmSubtype] = useState('sProstojem');
   const [wo, setWo] = useState('');
   const [issue, setIssue] = useState('');
   const [solution, setSolution] = useState('');
   const [photos, setPhotos] = useState(() => session?.photos || []);
+  const [materials, setMaterials] = useState([]);
+  const [editingMaterialIdx, setEditingMaterialIdx] = useState(null);
   const fileInputRef = useRef(null);
   const galleryInputRef = useRef(null);
 
-  // session (ze STOP) má reálný start/end. Ruční přidání do minulého dne
-  // startuje s rozumným výchozím oknem (8:00–8:30 toho dne), oboje plně editovatelné.
-  const initialStart = session ? session.startTime : (() => {
+  // session (ze STOP) má reálný start/end, zaokrouhlený na nejbližších 5 minut
+  // (appka takhle zaokrouhluje časy všude — konzistentní, "hezké" hodnoty
+  // bez nutnosti řešit sekundovou přesnost). Ruční přidání opravy na DNEŠNÍ
+  // den startuje od aktuálního času (taky zaokrouhleného) — nejpravděpodobnější
+  // hodnota, kterou uživatel chce. Pro jiný (minulý) den, kde "teď" nedává
+  // smysl, zůstává rozumné pevné okno 8:00–8:30, oboje plně editovatelné.
+  const initialStart = session ? roundToNearest5Min(session.startTime) : (() => {
     const d = new Date(initialDate);
+    const today = new Date();
+    const isToday = d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
+    if (isToday) return roundToNearest5Min(Date.now());
     d.setHours(8, 0, 0, 0);
     return d.getTime();
   })();
-  const initialEnd = session ? session.endTime : initialStart + 30 * 60000;
+  const initialEndRaw = session ? roundToNearest5Min(session.endTime) : initialStart + 30 * 60000;
+  // Krátké opravy (pod 5 minut) se po zaokrouhlení mohou srazit na stejný čas
+  // jako start — v tom případě necháme aspoň jeden 5minutový blok, ať interval
+  // nikdy není nulový nebo záporný.
+  const initialEnd = session && initialEndRaw <= initialStart ? initialStart + 5 * 60000 : initialEndRaw;
 
   const [startTime, setStartTime] = useState(initialStart);
   const [endTime, setEndTime] = useState(initialEnd);
@@ -855,7 +887,7 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
   const [editingDowntime, setEditingDowntime] = useState(false);
 
   const actualDuration = Math.max(0, endTime - startTime);
-  const effectiveDowntime = downtimeTouched ? Math.max(0, downtimeEnd - downtimeStart) : actualDuration;
+  const effectiveDowntime = emSubtype === 'bezProstoje' ? 0 : (downtimeTouched ? Math.max(0, downtimeEnd - downtimeStart) : actualDuration);
   const isBackfill = !session;
 
   function updateStartDate(newStart) {
@@ -866,6 +898,27 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
     if (!downtimeTouched) {
       setDowntimeStart(newStart);
       setDowntimeEnd(e => Math.max(newStart, e + delta));
+    }
+  }
+
+  // Editace času "Od"/"Do" (doba na místě) posune prostoj stejným způsobem,
+  // pokud ho uživatel ještě needitoval ručně — jakmile prostoj upraví sám,
+  // dál se s dobou na místě nesynchronizuje (downtimeTouched).
+  function updateStartTime(newStart) {
+    const delta = newStart - startTime;
+    setStartTime(newStart);
+    setEndTime(e => Math.max(newStart, e + delta));
+    if (!downtimeTouched) {
+      setDowntimeStart(s => s + delta);
+      setDowntimeEnd(e => e + delta);
+    }
+  }
+
+  function updateEndTime(newEnd) {
+    const delta = newEnd - endTime;
+    setEndTime(newEnd);
+    if (!downtimeTouched) {
+      setDowntimeEnd(e => e + delta);
     }
   }
 
@@ -885,11 +938,26 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
     setPhotos(prev => prev.filter((_, i) => i !== idx));
   }
 
+  function submitMaterial(mat) {
+    if (editingMaterialIdx !== null) {
+      setMaterials(prev => prev.map((m, i) => i === editingMaterialIdx ? mat : m));
+      setEditingMaterialIdx(null);
+    } else {
+      setMaterials(prev => [...prev, mat]);
+    }
+  }
+
+  function removeMaterial(idx) {
+    setMaterials(prev => prev.filter((_, i) => i !== idx));
+    if (editingMaterialIdx === idx) setEditingMaterialIdx(null);
+  }
+
   async function save() {
     const record = {
       id: uid(), machineId: machine.id, machineName: machine.name, type,
       cmSubtype: type === 'CM' ? cmSubtype : null,
-      wo: wo.trim(), issue: issue.trim(), solution: solution.trim(), photos,
+      emSubtype: type === 'EM' ? emSubtype : null,
+      wo: wo.trim(), issue: issue.trim(), solution: solution.trim(), photos, materials,
       startTime, endTime: Math.max(startTime, endTime),
       downtimeMs: type === 'EM' ? effectiveDowntime : null,
       downtimeStart: type === 'EM' ? downtimeStart : null,
@@ -909,8 +977,8 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
           <div style={{ fontSize: 18, fontWeight: 700, color: theme.text, marginBottom: 12 }}>{machine.name}</div>
           <DateEditor theme={theme} label="Datum" value={startTime} onChange={updateStartDate} isDark={resolvedThemeName === 'dark'} />
           <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-            <TimeEditor theme={theme} label="Od" value={startTime} onChange={setStartTime} isDark={resolvedThemeName === 'dark'} />
-            <TimeEditor theme={theme} label="Do" value={endTime} onChange={setEndTime} isDark={resolvedThemeName === 'dark'} />
+            <TimeEditor theme={theme} label="Od" value={startTime} onChange={updateStartTime} isDark={resolvedThemeName === 'dark'} />
+            <TimeEditor theme={theme} label="Do" value={endTime} onChange={updateEndTime} isDark={resolvedThemeName === 'dark'} />
           </div>
           <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 10 }}>doba na místě {fmtDurationShort(actualDuration)}</div>
         </Card>
@@ -948,6 +1016,22 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
         )}
 
         {type === 'EM' && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 22 }}>
+            {Object.entries(EM_SUBTYPES).map(([key, cfg]) => {
+              const active = emSubtype === key;
+              const c = key === 'bezProstoje' ? theme.emAlt : theme.em;
+              const s = key === 'bezProstoje' ? theme.emAltSoft : theme.emSoft;
+              return (
+                <button key={key} onClick={() => setEmSubtype(key)}
+                  style={{ flex: 1, background: active ? s : theme.surface, border: `1.5px solid ${active ? c : theme.border}`, borderRadius: 12, padding: '9px 10px', color: active ? c : theme.textDim, fontSize: 12.5, fontWeight: 700, transition: 'all 0.15s ease' }}>
+                  {cfg.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {type === 'EM' && emSubtype === 'sProstojem' && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div style={{ ...S.fieldLabel, color: theme.textFaint, marginBottom: 0 }}>Prostoj (od–do)</div>
@@ -1011,6 +1095,18 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
         </div>
         <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleFiles} />
         <input ref={galleryInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFiles} />
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Materiál</div>
+        <MaterialList
+          theme={theme} materials={materials} editingIdx={editingMaterialIdx}
+          onEdit={setEditingMaterialIdx} onRemove={removeMaterial}
+        />
+        <MaterialEditor
+          theme={theme}
+          initial={editingMaterialIdx !== null ? materials[editingMaterialIdx] : null}
+          onSubmit={submitMaterial}
+          onCancelEdit={() => setEditingMaterialIdx(null)}
+        />
         <div style={{ height: 12 }} />
       </div>
 
@@ -1326,8 +1422,8 @@ function DayScreen({ theme, db, dateKey, onBack, onHome, onOpenRecord, onAddReco
           </div>
         )}
         {records.map(r => {
-          const color = r.type === 'EM' ? theme.em : (r.cmSubtype === 'oprava' ? theme.cmAlt : theme.cm);
-          const soft = r.type === 'EM' ? theme.emSoft : (r.cmSubtype === 'oprava' ? theme.cmAltSoft : theme.cmSoft);
+          const color = r.type === 'EM' ? (r.emSubtype === 'bezProstoje' ? theme.emAlt : theme.em) : (r.cmSubtype === 'oprava' ? theme.cmAlt : theme.cm);
+          const soft = r.type === 'EM' ? (r.emSubtype === 'bezProstoje' ? theme.emAltSoft : theme.emSoft) : (r.cmSubtype === 'oprava' ? theme.cmAltSoft : theme.cmSoft);
           const displayDuration = r.type === 'EM' ? (r.downtimeMs ?? (r.endTime - r.startTime)) : (r.endTime - r.startTime);
           return (
             <button
@@ -1545,24 +1641,260 @@ function DateEditor({ theme, label, value, onChange, isDark }) {
   );
 }
 
+// Vlastní time picker — nahrazuje nativní <input type="time">, který na
+// Android telefonech vyvolá systémový kruhový picker přetékající mimo
+// obrazovku appky. Minuty jsou vždy v krocích po 5, ať je výběr rychlý
+// a časy zůstávají konzistentně zaokrouhlené.
+function CustomTimePicker({ theme, initialValue, onConfirm, onCancel }) {
+  const initial = new Date(initialValue);
+  const [hour, setHour] = useState(initial.getHours());
+  const [minute, setMinute] = useState(Math.round(initial.getMinutes() / 5) * 5 % 60);
+  const hourRef = useRef(null);
+  const minuteRef = useRef(null);
+  const ITEM_H = 44;
+
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const minutes = Array.from({ length: 12 }, (_, i) => i * 5);
+
+  useEffect(() => {
+    // Vycentruje scroll na aktuální hodnotu při otevření, bez animace.
+    hourRef.current?.scrollTo({ top: hour * ITEM_H, behavior: 'instant' });
+    minuteRef.current?.scrollTo({ top: (minute / 5) * ITEM_H, behavior: 'instant' });
+  }, []);
+
+  function handleScroll(ref, setter, step, max) {
+    const idx = Math.round(ref.current.scrollTop / ITEM_H);
+    const clamped = Math.max(0, Math.min(max, idx));
+    setter(clamped * step);
+  }
+
+  function confirm() {
+    const nd = new Date(initialValue);
+    nd.setHours(hour, minute, 0, 0);
+    onConfirm(nd.getTime());
+  }
+
+  return (
+    <div onClick={onCancel} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 90 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: theme.surfaceSolid, border: `1px solid ${theme.borderStrong}`, borderRadius: 22, padding: 20, width: '100%', maxWidth: 300, boxShadow: theme.shadow }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: theme.text, textAlign: 'center', marginBottom: 14 }}>
+          {pad(hour)}:{pad(minute)}
+        </div>
+        <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', gap: 4, height: ITEM_H * 3 }}>
+          <div style={{
+            position: 'absolute', top: ITEM_H, left: 8, right: 8, height: ITEM_H,
+            background: theme.primarySoft, border: `1px solid ${theme.primary}44`, borderRadius: 12, pointerEvents: 'none',
+          }} />
+          <div
+            ref={hourRef}
+            onScroll={() => handleScroll(hourRef, setHour, 1, 23)}
+            style={{ width: 70, height: ITEM_H * 3, overflowY: 'scroll', scrollSnapType: 'y mandatory', scrollbarWidth: 'none' }}
+          >
+            <div style={{ height: ITEM_H }} />
+            {hours.map(h => (
+              <div key={h} style={{
+                height: ITEM_H, display: 'flex', alignItems: 'center', justifyContent: 'center', scrollSnapAlign: 'start',
+                fontSize: 20, fontWeight: h === hour ? 700 : 500, fontVariantNumeric: 'tabular-nums',
+                color: h === hour ? theme.text : theme.textFaint,
+              }}>{pad(h)}</div>
+            ))}
+            <div style={{ height: ITEM_H }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', fontSize: 20, fontWeight: 700, color: theme.textFaint }}>:</div>
+          <div
+            ref={minuteRef}
+            onScroll={() => handleScroll(minuteRef, setMinute, 5, 11)}
+            style={{ width: 70, height: ITEM_H * 3, overflowY: 'scroll', scrollSnapType: 'y mandatory', scrollbarWidth: 'none' }}
+          >
+            <div style={{ height: ITEM_H }} />
+            {minutes.map(m => (
+              <div key={m} style={{
+                height: ITEM_H, display: 'flex', alignItems: 'center', justifyContent: 'center', scrollSnapAlign: 'start',
+                fontSize: 20, fontWeight: m === minute ? 700 : 500, fontVariantNumeric: 'tabular-nums',
+                color: m === minute ? theme.text : theme.textFaint,
+              }}>{pad(m)}</div>
+            ))}
+            <div style={{ height: ITEM_H }} />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+          <button onClick={onCancel} style={{ flex: 1, background: theme.surfaceElevated, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '12px', color: theme.text, fontWeight: 600 }}>Zrušit</button>
+          <button onClick={confirm} style={{ flex: 1, background: theme.primary, border: 'none', borderRadius: 12, padding: '12px', color: '#fff', fontWeight: 700 }}>Nastavit</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Vlastní number picker (0-99) — stejný vzhled a mechanismus jako
+// CustomTimePicker, jen jeden scroll sloupec. Používá se pro zadání počtu
+// kusů materiálu.
+function NumberPicker({ theme, initialValue, onConfirm, onCancel }) {
+  const current = Math.max(0, Math.min(99, initialValue ?? 1));
+  const colRef = useRef(null);
+  const ITEM_H = 44;
+  const numbers = Array.from({ length: 100 }, (_, i) => i);
+
+  useEffect(() => {
+    // Vycentruje scroll na aktuální hodnotu při otevření, bez animace.
+    const idx = colRef.current?.querySelector(`[data-n="${current}"]`);
+    idx?.scrollIntoView({ block: 'center', behavior: 'instant' });
+  }, []);
+
+  return (
+    <div onClick={onCancel} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 90 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: theme.surfaceSolid, border: `1px solid ${theme.borderStrong}`, borderRadius: 22, padding: 16, width: '100%', maxWidth: 200, boxShadow: theme.shadow }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: theme.textFaint, textAlign: 'center', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          Počet kusů
+        </div>
+        <div ref={colRef} style={{ height: ITEM_H * 4, overflowY: 'auto' }}>
+          {numbers.map(n => (
+            <button
+              key={n}
+              data-n={n}
+              onClick={() => onConfirm(n)}
+              style={{
+                width: '100%', height: ITEM_H, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: n === current ? theme.primarySoft : 'none', border: 'none', borderRadius: 10,
+                fontSize: 18, fontWeight: n === current ? 700 : 500, fontVariantNumeric: 'tabular-nums',
+                color: n === current ? theme.primary : theme.text,
+              }}
+            >{n}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TimeEditor({ theme, label, value, onChange, isDark }) {
+  const [showPicker, setShowPicker] = useState(false);
   return (
     <div style={{ flex: 1 }}>
       <div style={{ fontSize: 11, color: theme.textFaint, marginBottom: 6, fontWeight: 600 }}>{label}</div>
-      <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '10px 12px', backdropFilter: theme.blur }}>
-        <input
-          type="time"
-          value={fmtInputTime(value)}
-          onChange={e => {
-            if (!e.target.value) return;
-            const [h, m] = e.target.value.split(':').map(Number);
-            const nd = new Date(value);
-            nd.setHours(h, m, 0, 0);
-            onChange(nd.getTime());
-          }}
-          style={{ width: '100%', background: 'none', border: 'none', outline: 'none', color: theme.text, fontSize: 15, fontWeight: 700, fontFamily: 'inherit', colorScheme: isDark ? 'dark' : 'light' }}
+      <button
+        onClick={() => setShowPicker(true)}
+        style={{ width: '100%', textAlign: 'left', background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '10px 12px', backdropFilter: theme.blur, color: theme.text, fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}
+      >
+        {fmtTime(value)}
+      </button>
+      {showPicker && (
+        <CustomTimePicker
+          theme={theme}
+          initialValue={value}
+          onCancel={() => setShowPicker(false)}
+          onConfirm={(newTs) => { onChange(newTs); setShowPicker(false); }}
         />
+      )}
+    </div>
+  );
+}
+
+// Formátuje jednu položku materiálu jako řádek "2x SP55235 ŘEMEN" — počet
+// se zobrazí jen když je > 0, skladové číslo a název se spojí mezerou.
+function fmtMaterialLine(mat) {
+  const parts = [];
+  if (mat.name) parts.push(mat.name);
+  if (mat.code) parts.push(mat.code);
+  const label = parts.join(' ');
+  return mat.qty > 0 ? `${mat.qty}x ${label}` : label;
+}
+
+// Sdílený vstupní formulář pro přidání/editaci jedné položky materiálu —
+// tři pole (počet přes vlastní NumberPicker, skladové číslo, název).
+// Používá se v RecordForm i RecordDetail, ať je chování na obou místech
+// identické. onSubmit dostane { qty, code, name } a formulář se vyprázdní.
+function MaterialEditor({ theme, initial, onSubmit, onCancelEdit }) {
+  const [qty, setQty] = useState(initial?.qty ?? 1);
+  const [code, setCode] = useState(initial?.code ?? '');
+  const [name, setName] = useState(initial?.name ?? '');
+  const [showQtyPicker, setShowQtyPicker] = useState(false);
+
+  const canSubmit = qty > 0 && (code.trim() || name.trim());
+
+  function submit() {
+    if (!canSubmit) return;
+    onSubmit({ qty, code: code.trim(), name: name.trim() });
+    if (!initial) { setQty(1); setCode(''); setName(''); }
+  }
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <div style={{ width: 76 }}>
+          <div style={{ fontSize: 10.5, color: theme.textFaint, marginBottom: 5, fontWeight: 600 }}>Počet</div>
+          <button
+            onClick={() => setShowQtyPicker(true)}
+            style={{ width: '100%', textAlign: 'center', background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '10px 8px', color: theme.text, fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', backdropFilter: theme.blur }}
+          >
+            {qty}
+          </button>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 10.5, color: theme.textFaint, marginBottom: 5, fontWeight: 600 }}>Název materiálu</div>
+          <input
+            style={{ width: '100%', background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '10px 12px', color: theme.text, fontSize: 14, fontFamily: 'inherit', backdropFilter: theme.blur, boxSizing: 'border-box' }}
+            placeholder="Řemen" value={name} onChange={e => setName(e.target.value.toUpperCase())}
+          />
+        </div>
       </div>
+      <div style={{ fontSize: 10.5, color: theme.textFaint, marginBottom: 5, fontWeight: 600 }}>Skladové číslo</div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          style={{ flex: 1, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '10px 12px', color: theme.text, fontSize: 14, fontFamily: 'inherit', backdropFilter: theme.blur, minWidth: 0 }}
+          placeholder="SP365655" value={code}
+          onChange={e => setCode(e.target.value.toUpperCase())}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+          enterKeyHint="done"
+        />
+        {initial && (
+          <button onClick={onCancelEdit} style={{ width: 44, borderRadius: 12, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, flexShrink: 0 }}>
+            <Icon.X size={18} />
+          </button>
+        )}
+        <button onClick={submit} disabled={!canSubmit} style={{ width: 44, borderRadius: 12, background: canSubmit ? theme.primarySoft : theme.surface, border: `1px solid ${canSubmit ? theme.primary : theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: canSubmit ? theme.primary : theme.textFaint, flexShrink: 0 }}>
+          <Icon.Check size={18} weight="bold" />
+        </button>
+      </div>
+      {showQtyPicker && (
+        <NumberPicker
+          theme={theme}
+          initialValue={qty}
+          onCancel={() => setShowQtyPicker(false)}
+          onConfirm={(v) => { setQty(v); setShowQtyPicker(false); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Sdílený výpis položek materiálu jako řádky (ne tagy) — každá s tlačítky
+// upravit/smazat. Klepnutí na "upravit" nahradí vstupní formulář daty
+// položky, ať jde snadno opravit překlep bez nutnosti smazat a přidat znovu.
+function MaterialList({ theme, materials, editingIdx, onEdit, onRemove }) {
+  if (!materials?.length) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+      {materials.map((mat, i) => (
+        <div key={i} style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          background: editingIdx === i ? theme.primarySoft : theme.surfaceElevated,
+          border: `1px solid ${editingIdx === i ? theme.primary : theme.border}`,
+          borderRadius: 10, padding: '9px 8px 9px 12px',
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {fmtMaterialLine(mat)}
+          </span>
+          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+            <button onClick={() => onEdit(i)} style={{ width: 26, height: 26, borderRadius: 8, background: 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint }}>
+              <Icon.Edit size={13} />
+            </button>
+            <button onClick={() => onRemove(i)} style={{ width: 26, height: 26, borderRadius: 8, background: 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint }}>
+              <Icon.Trash size={13} />
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1577,6 +1909,8 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
   const [copyFeedback, setCopyFeedback] = useState(false); // brief "Zkopírováno" confirmation after copy
   const [solutionCopied, setSolutionCopied] = useState(false); // brief confirmation after copying solution text
   const [showMachinePicker, setShowMachinePicker] = useState(false); // overlay for changing the machine while editing
+  const [editingMaterialIdx, setEditingMaterialIdx] = useState(null);
+  const [viewMaterialEditIdx, setViewMaterialEditIdx] = useState(null); // inline editace materiálu z needitovatelného zobrazení, bez vstupu do celkového editačního módu
 
   // Draft fields used only while editing
   const [draft, setDraft] = useState(() => ({ ...record }));
@@ -1594,8 +1928,8 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
   }, [record, editing]);
 
   const view = editing ? draft : record;
-  const color = view.type === 'EM' ? theme.em : (view.cmSubtype === 'oprava' ? theme.cmAlt : theme.cm);
-  const soft = view.type === 'EM' ? theme.emSoft : (view.cmSubtype === 'oprava' ? theme.cmAltSoft : theme.cmSoft);
+  const color = view.type === 'EM' ? (view.emSubtype === 'bezProstoje' ? theme.emAlt : theme.em) : (view.cmSubtype === 'oprava' ? theme.cmAlt : theme.cm);
+  const soft = view.type === 'EM' ? (view.emSubtype === 'bezProstoje' ? theme.emAltSoft : theme.emSoft) : (view.cmSubtype === 'oprava' ? theme.cmAltSoft : theme.cmSoft);
   const actualDuration = view.endTime - view.startTime;
   const draftDowntime = editing ? Math.max(0, downtimeEnd - downtimeStart) : null;
   const displayDuration = view.type === 'EM' ? (editing ? draftDowntime : (view.downtimeMs ?? actualDuration)) : actualDuration;
@@ -1604,8 +1938,64 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
     setDraft(d => ({ ...d, ...patch }));
   }
 
+  function submitMaterialEdit(mat) {
+    const current = draft.materials || [];
+    if (editingMaterialIdx !== null) {
+      updateDraft({ materials: current.map((m, i) => i === editingMaterialIdx ? mat : m) });
+      setEditingMaterialIdx(null);
+    } else {
+      updateDraft({ materials: [...current, mat] });
+    }
+  }
+
+  function removeMaterialEdit(idx) {
+    updateDraft({ materials: (draft.materials || []).filter((_, i) => i !== idx) });
+    if (editingMaterialIdx === idx) setEditingMaterialIdx(null);
+  }
+
+  // Úprava/smazání materiálu přímo z needitovatelného zobrazení — uloží se
+  // rovnou do databáze bez nutnosti vstoupit do editačního módu celého
+  // záznamu. onUpdated appce řekne, ať si znovu načte aktuální data.
+  async function submitMaterialFromView(mat) {
+    const current = record.materials || [];
+    const updatedMaterials = viewMaterialEditIdx !== null
+      ? current.map((m, i) => i === viewMaterialEditIdx ? mat : m)
+      : [...current, mat];
+    const updated = { ...record, materials: updatedMaterials };
+    await db.put('records', updated);
+    setViewMaterialEditIdx(null);
+    onUpdated(updated);
+  }
+
+  async function removeMaterialFromView(idx) {
+    const updated = { ...record, materials: (record.materials || []).filter((_, i) => i !== idx) };
+    await db.put('records', updated);
+    if (viewMaterialEditIdx === idx) setViewMaterialEditIdx(null);
+    onUpdated(updated);
+  }
+
+  // Editace "Od"/"Do" v needitovaném módu posune prostoj stejným způsobem,
+  // pokud ho uživatel ještě needitoval ručně — stejná logika jako v RecordForm.
+  function updateDraftStartTime(newStart) {
+    const delta = newStart - draft.startTime;
+    setDraft(d => ({ ...d, startTime: newStart, endTime: Math.max(newStart, d.endTime + delta) }));
+    if (!downtimeTouched) {
+      setDowntimeStart(s => s + delta);
+      setDowntimeEnd(e => e + delta);
+    }
+  }
+
+  function updateDraftEndTime(newEnd) {
+    const delta = newEnd - draft.endTime;
+    setDraft(d => ({ ...d, endTime: newEnd }));
+    if (!downtimeTouched) {
+      setDowntimeEnd(e => e + delta);
+    }
+  }
+
   async function saveEdits() {
-    const finalDowntime = draft.type === 'EM' ? (downtimeTouched ? Math.max(0, downtimeEnd - downtimeStart) : (draft.downtimeMs ?? (draft.endTime - draft.startTime))) : null;
+    const isBezProstoje = draft.type === 'EM' && draft.emSubtype === 'bezProstoje';
+    const finalDowntime = draft.type === 'EM' ? (isBezProstoje ? 0 : (downtimeTouched ? Math.max(0, downtimeEnd - downtimeStart) : (draft.downtimeMs ?? (draft.endTime - draft.startTime)))) : null;
     const finalDowntimeStart = draft.type === 'EM' ? (downtimeTouched ? downtimeStart : (draft.downtimeStart ?? draft.startTime)) : null;
     const finalDowntimeEnd = draft.type === 'EM' ? (downtimeTouched ? Math.max(downtimeStart, downtimeEnd) : (draft.downtimeEnd ?? draft.endTime)) : null;
     const updated = {
@@ -1685,8 +2075,8 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
                 {draft.type === 'CM' && draft.cmSubtype !== 'oprava' ? 'Práce' : 'Oprava'}
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
-                <TimeEditor theme={theme} label="Od" value={draft.startTime} onChange={v => updateDraft({ startTime: v })} isDark={resolvedThemeName === 'dark'} />
-                <TimeEditor theme={theme} label="Do" value={draft.endTime} onChange={v => updateDraft({ endTime: v })} isDark={resolvedThemeName === 'dark'} />
+                <TimeEditor theme={theme} label="Od" value={draft.startTime} onChange={updateDraftStartTime} isDark={resolvedThemeName === 'dark'} />
+                <TimeEditor theme={theme} label="Do" value={draft.endTime} onChange={updateDraftEndTime} isDark={resolvedThemeName === 'dark'} />
               </div>
             </div>
           ) : (
@@ -1698,7 +2088,7 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
                 <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 16, fontWeight: 700, color: theme.text }}>{fmtTime(view.startTime)}–{fmtTime(view.endTime)}</div>
                 <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>{fmtDurationShort(actualDuration)}</div>
               </div>
-              {view.type === 'EM' && (view.downtimeStart != null && view.downtimeEnd != null) && (
+              {view.type === 'EM' && view.emSubtype !== 'bezProstoje' && (view.downtimeStart != null && view.downtimeEnd != null) && (
                 <div style={{ flex: 1, background: theme.emSoft, border: `1px solid ${theme.em}33`, borderRadius: 12, padding: '11px 13px' }}>
                   <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: theme.em, opacity: 0.8, marginBottom: 4 }}>Prostoj</div>
                   <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 16, fontWeight: 700, color: theme.em }}>{fmtTime(view.downtimeStart)}–{fmtTime(view.downtimeEnd)}</div>
@@ -1744,6 +2134,22 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
             )}
 
             {draft.type === 'EM' && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 22 }}>
+                {Object.entries(EM_SUBTYPES).map(([key, cfg]) => {
+                  const active = (draft.emSubtype || 'sProstojem') === key;
+                  const c = key === 'bezProstoje' ? theme.emAlt : theme.em;
+                  const s = key === 'bezProstoje' ? theme.emAltSoft : theme.emSoft;
+                  return (
+                    <button key={key} onClick={() => updateDraft({ emSubtype: key })}
+                      style={{ flex: 1, background: active ? s : theme.surface, border: `1.5px solid ${active ? c : theme.border}`, borderRadius: 12, padding: '9px 10px', color: active ? c : theme.textDim, fontSize: 12.5, fontWeight: 700, transition: 'all 0.15s ease' }}>
+                      {cfg.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {draft.type === 'EM' && (draft.emSubtype || 'sProstojem') === 'sProstojem' && (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                   <div style={{ ...S.fieldLabel, color: theme.textFaint, marginBottom: 0 }}>Prostoj (od–do)</div>
@@ -1803,6 +2209,18 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
               ))}
               <PhotoAddButtons theme={theme} onFiles={handleFiles} />
             </div>
+
+            <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Materiál</div>
+            <MaterialList
+              theme={theme} materials={draft.materials} editingIdx={editingMaterialIdx}
+              onEdit={setEditingMaterialIdx} onRemove={removeMaterialEdit}
+            />
+            <MaterialEditor
+              theme={theme}
+              initial={editingMaterialIdx !== null ? (draft.materials || [])[editingMaterialIdx] : null}
+              onSubmit={submitMaterialEdit}
+              onCancelEdit={() => setEditingMaterialIdx(null)}
+            />
           </>
         )}
 
@@ -1845,7 +2263,7 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
             {view.photos?.length > 0 && (
               <>
                 <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Fotky</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 26 }}>
                   {view.photos.map((p, i) => (
                     <img
                       key={i} src={p} onClick={() => setLightboxIndex(i)}
@@ -1854,6 +2272,52 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
                   ))}
                 </div>
               </>
+            )}
+            {view.materials?.length > 0 && (
+              <div style={{ marginBottom: 26 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: theme.textFaint, marginBottom: 8 }}>Materiál</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                  {view.materials.map((mat, i) => (
+                    viewMaterialEditIdx === i ? (
+                      <MaterialEditor
+                        key={i}
+                        theme={theme}
+                        initial={mat}
+                        onSubmit={submitMaterialFromView}
+                        onCancelEdit={() => setViewMaterialEditIdx(null)}
+                      />
+                    ) : (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, background: theme.surfaceElevated, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '10px 14px' }}>
+                        {mat.qty > 0 && (
+                          <span style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 800, color: theme.primary, background: theme.primarySoft, borderRadius: 7, padding: '3px 8px', fontVariantNumeric: 'tabular-nums' }}>
+                            {mat.qty}×
+                          </span>
+                        )}
+                        <span style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 7, overflow: 'hidden' }}>
+                          {mat.name && (
+                            <span style={{ fontSize: 13.5, fontWeight: 600, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {mat.name}
+                            </span>
+                          )}
+                          {mat.code && (
+                            <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: theme.textFaint, background: theme.bgSubtle, border: `1px solid ${theme.border}`, borderRadius: 6, padding: '2px 6px', fontVariantNumeric: 'tabular-nums', letterSpacing: 0.3 }}>
+                              {mat.code}
+                            </span>
+                          )}
+                        </span>
+                        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                          <button onClick={() => setViewMaterialEditIdx(i)} style={{ width: 26, height: 26, borderRadius: 8, background: 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint }}>
+                            <Icon.Edit size={13} />
+                          </button>
+                          <button onClick={() => removeMaterialFromView(i)} style={{ width: 26, height: 26, borderRadius: 8, background: 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint }}>
+                            <Icon.Trash size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  ))}
+                </div>
+              </div>
             )}
           </>
         )}
@@ -2943,7 +3407,7 @@ function MachineFormScreen({ theme, db, machine, onBack, onSaved, onDeleted }) {
         <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Název stroje</div>
         <input
           style={{ ...S.textInput, background: theme.surface, border: `1px solid ${theme.border}`, color: theme.text, backdropFilter: theme.blur }}
-          placeholder="např. Jeřáb SLUSH02" value={name} onChange={e => setName(e.target.value)}
+          placeholder="např. Jeřáb SLUSH02" value={name} onChange={e => setName(e.target.value.toUpperCase())}
         />
 
         <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Kategorie</div>
