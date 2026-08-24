@@ -1,4 +1,4 @@
-const CACHE_NAME = 'denik-udrzbare-v6.27';
+const CACHE_NAME = 'denik-udrzbare-v6.36';
 const CORE_ASSETS = [
   './',
   './index.html',

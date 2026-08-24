@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.27';
+const APP_VERSION = '6.36';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -253,10 +253,10 @@ const Icon = {
   MachStroj: phosphorIcon('wrench'),
   MachTable: phosphorIcon('table'),
   MachCamera: phosphorIcon('camera'),
-  MachFlame: phosphorIcon('flame'),
+  MachFlame: phosphorIcon('fire-simple'),
   MachSparkle: phosphorIcon('sparkle'),
   MachStamp: phosphorIcon('stamp'),
-  MachCarousel: phosphorIcon('gear-six'),
+  MachCarousel: phosphorIcon('cylinder'),
   // Další technické ikony vztahující se k údržbě/továrně, sdílené jak pro
   // kategorie, tak pro jednotlivé stroje.
   TechHammer: phosphorIcon('hammer'),
@@ -310,8 +310,8 @@ const THEMES = {
 };
 
 const TYPES = {
-  CM: { label: 'CM', full: 'Normální práce', desc: 'bez prostoje' },
-  EM: { label: 'EM', full: 'Porucha', desc: 's prostojem' },
+  CM: { label: 'CM', full: 'Normální práce', desc: 'práce' },
+  EM: { label: 'EM', full: 'Porucha', desc: 'oprava' },
 };
 
 const CM_SUBTYPES = {
@@ -424,7 +424,7 @@ function Card({ theme, children, style }) {
   );
 }
 
-function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onOpenToday, onAddPhoto }) {
+function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onOpenToday, onAddPhoto, onRemovePhoto, onAddMaterial, onUpdateMaterial, onRemoveMaterial }) {
   const elapsed = useElapsed(activeSession?.startTime, !!activeSession);
   const now = useNow();
   const [pressed, setPressed] = useState(false);
@@ -434,6 +434,12 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
   const photoCount = activeSession?.photos?.length || 0;
+  const materialCount = activeSession?.materials?.length || 0;
+  const [showMaterialModal, setShowMaterialModal] = useState(false);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [editingMaterialIdx, setEditingMaterialIdx] = useState(null);
+  const [lightboxIndex, setLightboxIndex] = useState(null);
+  const [lightboxCopyFeedback, setLightboxCopyFeedback] = useState(false);
 
   function handleSessionFiles(e) {
     const files = Array.from(e.target.files || []);
@@ -448,6 +454,15 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
       reader.readAsDataURL(file);
     }))).then(dataUrls => onAddPhoto(dataUrls));
     e.target.value = '';
+  }
+
+  function submitSessionMaterial(mat) {
+    if (typeof editingMaterialIdx === 'number') {
+      onUpdateMaterial(editingMaterialIdx, mat);
+      setEditingMaterialIdx(null);
+    } else {
+      onAddMaterial(mat);
+    }
   }
 
   return (
@@ -514,37 +529,43 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
 
       {activeSession ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 76, padding: '0 22px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: 196 }}>
-            <button
-              onClick={() => cameraInputRef.current?.click()}
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', border: 'none' }}
-            >
-              <div style={{ width: 50, height: 50, borderRadius: 14, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim, backdropFilter: theme.blur }}>
-                <Icon.Camera size={20} />
-              </div>
-              <span style={{ fontSize: 11, fontWeight: 600, color: theme.textFaint }}>Foto</span>
-            </button>
-            {photoCount > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                <div style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ fontSize: 18, lineHeight: 1 }}>📷</span>
-                  <span style={{
-                    position: 'absolute', top: -6, right: -8, minWidth: 15, height: 15, borderRadius: 8, padding: '0 3px',
-                    background: theme.primary, color: '#fff', fontSize: 9.5, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
-                  }}>{photoCount}</span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 22 }}>
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setShowPhotoModal(true)}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', border: 'none' }}
+              >
+                <div style={{ width: 50, height: 50, borderRadius: 14, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim, backdropFilter: theme.blur }}>
+                  <Icon.Camera size={20} />
                 </div>
-              </div>
-            )}
-            <button
-              onClick={() => galleryInputRef.current?.click()}
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', border: 'none' }}
-            >
-              <div style={{ width: 50, height: 50, borderRadius: 14, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim, backdropFilter: theme.blur }}>
-                <Icon.Image size={20} />
-              </div>
-              <span style={{ fontSize: 11, fontWeight: 600, color: theme.textFaint }}>Galerie</span>
-            </button>
+                <span style={{ fontSize: 11, fontWeight: 600, color: theme.textFaint }}>Foto</span>
+              </button>
+              {photoCount > 0 && (
+                <span style={{
+                  position: 'absolute', top: -6, right: -6, minWidth: 18, height: 18, borderRadius: 9, padding: '0 4px',
+                  background: theme.primary, color: '#fff', fontSize: 9.5, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, border: `2px solid ${theme.bg}`,
+                }}>{photoCount}</span>
+              )}
+            </div>
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => { setEditingMaterialIdx(null); setShowMaterialModal(true); }}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', border: 'none' }}
+              >
+                <div style={{ width: 50, height: 50, borderRadius: 14, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim, backdropFilter: theme.blur }}>
+                  <Icon.Wrench size={20} />
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 600, color: theme.textFaint }}>Materiál</span>
+              </button>
+              {materialCount > 0 && (
+                <span style={{
+                  position: 'absolute', top: -6, right: -6, minWidth: 18, height: 18, borderRadius: 9, padding: '0 4px',
+                  background: theme.primary, color: '#fff', fontSize: 9.5, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, border: `2px solid ${theme.bg}`,
+                }}>{materialCount}</span>
+              )}
+            </div>
             <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleSessionFiles} />
             <input ref={galleryInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleSessionFiles} />
           </div>
@@ -559,6 +580,116 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
           <Icon.ChevronRight size={17} />
         </button>
       </div>
+
+      {showPhotoModal && (
+        <div onClick={() => setShowPhotoModal(false)} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', zIndex: 60, display: 'flex', alignItems: 'flex-end' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxHeight: '78vh', background: theme.surfaceSolid, borderTop: `1px solid ${theme.borderStrong}`, borderTopLeftRadius: 20, borderTopRightRadius: 20, boxShadow: theme.shadow, display: 'flex', flexDirection: 'column', overflow: 'hidden', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px 20px 12px', position: 'relative', flexShrink: 0 }}>
+              <span style={{ fontSize: 14.5, fontWeight: 700, color: theme.text }}>Fotky opravy</span>
+              <button onClick={() => setShowPhotoModal(false)} style={{ position: 'absolute', right: 16, width: 30, height: 30, borderRadius: 9, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint }}>
+                <Icon.X size={14} />
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '4px 20px 20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 28, marginBottom: 20 }}>
+                <button onClick={() => cameraInputRef.current?.click()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', border: 'none' }}>
+                  <div style={{ width: 46, height: 46, borderRadius: 13, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim }}>
+                    <Icon.Camera size={19} />
+                  </div>
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: theme.textFaint }}>Kamera</span>
+                </button>
+                <button onClick={() => galleryInputRef.current?.click()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', border: 'none' }}>
+                  <div style={{ width: 46, height: 46, borderRadius: 13, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim }}>
+                    <Icon.Image size={19} />
+                  </div>
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: theme.textFaint }}>Nahrát z galerie</span>
+                </button>
+              </div>
+              {(activeSession?.photos || []).length === 0 ? (
+                <div style={{ fontSize: 12.5, color: theme.textFaint, textAlign: 'center', padding: '8px 0 4px' }}>Zatím žádné fotky — přidej je tlačítkem výše.</div>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  {(activeSession?.photos || []).map((p, i) => (
+                    <div key={i} style={{ position: 'relative', width: 88, height: 88 }}>
+                      <img src={p} onClick={() => setLightboxIndex(i)} style={{ width: 88, height: 88, borderRadius: 12, objectFit: 'cover', border: `1px solid ${theme.border}`, cursor: 'pointer' }} />
+                      <button onClick={() => onRemovePhoto(i)} style={{ position: 'absolute', top: -6, right: -6, width: 22, height: 22, borderRadius: '50%', background: theme.em, border: `2px solid ${theme.surfaceSolid}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+                        <Icon.X size={11} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMaterialModal && (
+        <div onClick={() => { setShowMaterialModal(false); setEditingMaterialIdx(null); }} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', zIndex: 60, display: 'flex', alignItems: 'flex-end' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxHeight: '78vh', background: theme.surfaceSolid, borderTop: `1px solid ${theme.borderStrong}`, borderTopLeftRadius: 20, borderTopRightRadius: 20, boxShadow: theme.shadow, display: 'flex', flexDirection: 'column', overflow: 'hidden', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px 20px 12px', position: 'relative', flexShrink: 0 }}>
+              <span style={{ fontSize: 14.5, fontWeight: 700, color: theme.text }}>Materiál opravy</span>
+              <button onClick={() => { setShowMaterialModal(false); setEditingMaterialIdx(null); }} style={{ position: 'absolute', right: 16, width: 30, height: 30, borderRadius: 9, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint }}>
+                <Icon.X size={14} />
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '4px 20px 20px' }}>
+              <MaterialList
+                theme={theme} materials={activeSession?.materials || []} editingIdx={editingMaterialIdx}
+                onEdit={setEditingMaterialIdx} onRemove={onRemoveMaterial}
+              />
+              <MaterialEditor
+                theme={theme}
+                initial={typeof editingMaterialIdx === 'number' ? (activeSession?.materials || [])[editingMaterialIdx] : null}
+                onSubmit={submitSessionMaterial}
+                onCancelEdit={() => setEditingMaterialIdx(null)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lightboxIndex !== null && (
+        <div onClick={() => setLightboxIndex(null)} style={{ position: 'fixed', inset: 0, zIndex: 95, background: 'rgba(0,0,0,0.94)', display: 'flex', flexDirection: 'column' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: 16 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={async () => { await sharePhoto((activeSession?.photos || [])[lightboxIndex], null, lightboxIndex); }}
+                style={{ width: 40, height: 40, borderRadius: 11, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+              >
+                <Icon.ShareIcon size={17} />
+              </button>
+              <button
+                onClick={async () => {
+                  const ok = await copyPhotoToClipboard((activeSession?.photos || [])[lightboxIndex]);
+                  if (ok) { setLightboxCopyFeedback(true); setTimeout(() => setLightboxCopyFeedback(false), 1800); }
+                }}
+                style={{ width: 40, height: 40, borderRadius: 11, background: lightboxCopyFeedback ? theme.cmSoft : 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: lightboxCopyFeedback ? theme.cm : '#fff' }}
+              >
+                {lightboxCopyFeedback ? <Icon.Check size={16} weight="bold" /> : <Icon.Copy size={17} />}
+              </button>
+              <button
+                onClick={async () => { await downloadPhoto((activeSession?.photos || [])[lightboxIndex], null, lightboxIndex); }}
+                style={{ width: 40, height: 40, borderRadius: 11, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}
+              >
+                <Icon.Download size={17} />
+              </button>
+              <button
+                onClick={() => { onRemovePhoto(lightboxIndex); setLightboxIndex(null); }}
+                style={{ width: 40, height: 40, borderRadius: 11, background: 'rgba(244,63,94,0.18)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ff6976' }}
+              >
+                <Icon.Trash size={17} />
+              </button>
+              <button onClick={() => setLightboxIndex(null)} style={{ width: 40, height: 40, borderRadius: 11, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+                <Icon.X size={18} />
+              </button>
+            </div>
+          </div>
+          <div onClick={(e) => e.stopPropagation()} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+            <ZoomableImage src={(activeSession?.photos || [])[lightboxIndex]} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -728,7 +859,7 @@ function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored }) {
   );
 }
 
-function ModalHeader({ theme, title, onBack, onHome, onAction, actionIcon: ActionIcon, actionVariant }) {
+function ModalHeader({ theme, title, onBack, onHome, onAction, actionIcon: ActionIcon, actionVariant, onSecondaryAction, secondaryActionIcon: SecondaryIcon }) {
   return (
     <div style={{ ...S.modalHeader, borderBottom: `1px solid ${theme.border}` }}>
       <div style={{ display: 'flex', gap: 8 }}>
@@ -736,7 +867,10 @@ function ModalHeader({ theme, title, onBack, onHome, onAction, actionIcon: Actio
         {onHome && <IconButton theme={theme} onClick={onHome}><Icon.House size={18} /></IconButton>}
       </div>
       <span style={{ ...S.modalTitle, color: theme.text }}>{title}</span>
-      {ActionIcon ? <IconButton theme={theme} onClick={onAction} variant={actionVariant}><ActionIcon size={18} /></IconButton> : <div style={{ width: 42 }} />}
+      <div style={{ display: 'flex', gap: 8 }}>
+        {SecondaryIcon && <IconButton theme={theme} onClick={onSecondaryAction}><SecondaryIcon size={18} /></IconButton>}
+        {ActionIcon ? <IconButton theme={theme} onClick={onAction} variant={actionVariant}><ActionIcon size={18} /></IconButton> : <div style={{ width: 42 }} />}
+      </div>
     </div>
   );
 }
@@ -851,7 +985,7 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
   const [issue, setIssue] = useState('');
   const [solution, setSolution] = useState('');
   const [photos, setPhotos] = useState(() => session?.photos || []);
-  const [materials, setMaterials] = useState([]);
+  const [materials, setMaterials] = useState(() => session?.materials || []);
   const [editingMaterialIdx, setEditingMaterialIdx] = useState(null);
   const fileInputRef = useRef(null);
   const galleryInputRef = useRef(null);
@@ -1123,7 +1257,7 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
 // ============================================================
 // YEAR SCREEN — dlaždice měsíců s počty a časem prostojů
 // ============================================================
-function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, refreshTick, initialYear }) {
+function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSearch, refreshTick, initialYear }) {
   const [records, setRecords] = useState([]);
   const [year, setYear] = useState(initialYear || new Date().getFullYear());
 
@@ -1166,7 +1300,7 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, refre
 
   return (
     <div style={{ ...S.screen, background: theme.bg }}>
-      <ModalHeader theme={theme} title="Přehled" onBack={onBack} onHome={onHome} onAction={() => onAddRecord(fmtDateKey(Date.now()))} actionIcon={Icon.Plus} />
+      <ModalHeader theme={theme} title="Přehled" onBack={onBack} onHome={onHome} onAction={() => onAddRecord(fmtDateKey(Date.now()))} actionIcon={Icon.Plus} onSecondaryAction={() => onSearch({ scope: 'year', year })} secondaryActionIcon={Icon.Search} />
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '14px 20px 4px' }}>
         <button
@@ -1240,7 +1374,7 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, refre
 // ============================================================
 // MONTH SCREEN — dny v měsíci s opravami
 // ============================================================
-function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddRecord, refreshTick, onNavigateMonth }) {
+function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddRecord, onSearch, refreshTick, onNavigateMonth }) {
   const [records, setRecords] = useState([]);
 
   const load = useCallback(async () => {
@@ -1308,7 +1442,7 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
 
   return (
     <div style={{ ...S.screen, background: theme.bg }}>
-      <ModalHeader theme={theme} title="Měsíc" onBack={onBack} onHome={onHome} onAction={() => onAddRecord(defaultDateForMonth())} actionIcon={Icon.Plus} />
+      <ModalHeader theme={theme} title="Měsíc" onBack={onBack} onHome={onHome} onAction={() => onAddRecord(defaultDateForMonth())} actionIcon={Icon.Plus} onSecondaryAction={() => onSearch({ scope: 'month', monthKey })} secondaryActionIcon={Icon.Search} />
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '14px 20px 4px' }}>
         <button
@@ -1394,6 +1528,177 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
 // ============================================================
 // DAY SCREEN — jednotlivé záznamy daného dne
 // ============================================================
+// Typy filtrovatelné při hledání — kombinace type+subtype, protože appka
+// rozlišuje čtyři prakticky odlišné kategorie oprav, ne jen CM/EM.
+const SEARCH_TYPE_OPTIONS = [
+  { key: 'cm-normal', label: 'CM', colorKey: 'cm', match: r => r.type === 'CM' && (r.cmSubtype || 'normal') === 'normal' },
+  { key: 'cm-oprava', label: 'CM Oprava', colorKey: 'cmAlt', match: r => r.type === 'CM' && r.cmSubtype === 'oprava' },
+  { key: 'em-sprostojem', label: 'EM s prostojem', colorKey: 'em', match: r => r.type === 'EM' && (r.emSubtype || 'sProstojem') === 'sProstojem' },
+  { key: 'em-bezprostoje', label: 'EM bez prostoje', colorKey: 'emAlt', match: r => r.type === 'EM' && r.emSubtype === 'bezProstoje' },
+];
+
+// Hledání záznamů podle stroje, volného textu (závada/řešení/WO/materiál) a
+// typu opravy — rozsah je buď celý rok, nebo jeden konkrétní měsíc, podle
+// toho, odkud bylo hledání otevřeno (YearScreen vs MonthScreen).
+function SearchScreen({ theme, db, scope, onBack, onHome, onOpenRecord }) {
+  const [allRecords, setAllRecords] = useState([]);
+  const [query, setQuery] = useState('');
+  const [machine, setMachine] = useState(null);
+  const [showMachinePicker, setShowMachinePicker] = useState(false);
+  const [selectedTypes, setSelectedTypes] = useState([]); // prázdné = všechny typy
+
+  useEffect(() => {
+    db.getAll('records').then(all => {
+      const inScope = scope.scope === 'year'
+        ? all.filter(r => r.date.startsWith(`${scope.year}-`))
+        : all.filter(r => r.date.startsWith(scope.monthKey));
+      inScope.sort((a, b) => b.startTime - a.startTime);
+      setAllRecords(inScope);
+    });
+  }, [db, scope]);
+
+  const results = useMemo(() => {
+    const q = query.trim().toUpperCase();
+    return allRecords.filter(r => {
+      if (machine && r.machineId !== machine.id) return false;
+      if (selectedTypes.length > 0 && !selectedTypes.some(key => SEARCH_TYPE_OPTIONS.find(t => t.key === key).match(r))) return false;
+      if (q) {
+        const haystack = [
+          r.machineName, r.wo, r.issue, r.solution,
+          ...(r.materials || []).map(m => `${m.name || ''} ${m.code || ''}`),
+        ].filter(Boolean).join(' ').toUpperCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [allRecords, query, machine, selectedTypes]);
+
+  function toggleType(key) {
+    setSelectedTypes(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  }
+
+  const scopeLabel = scope.scope === 'year' ? `rok ${scope.year}` : fmtMonthLabel(scope.monthKey);
+  const hasFilters = query.trim() || machine || selectedTypes.length > 0;
+
+  return (
+    <div style={{ ...S.screen, background: theme.bg }}>
+      <ModalHeader theme={theme} title="Hledat" onBack={onBack} onHome={onHome} />
+      <div style={{ padding: '14px 20px 0' }}>
+        <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 12 }}>Prohledává se: {scopeLabel}</div>
+
+        <input
+          style={{ width: '100%', background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 14, padding: '12px 16px', color: theme.text, fontSize: 15, fontFamily: 'inherit', backdropFilter: theme.blur, boxSizing: 'border-box', marginBottom: 10 }}
+          placeholder="Hledat text (závada, řešení, WO, materiál)..."
+          value={query} onChange={e => setQuery(e.target.value)}
+        />
+
+        <div style={{ display: 'flex', alignItems: 'stretch', gap: 8, marginBottom: 10 }}>
+          <button
+            onClick={() => setShowMachinePicker(true)}
+            style={{ flex: 1, textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 14, padding: '12px 16px', color: machine ? theme.text : theme.textFaint, fontSize: 15, backdropFilter: theme.blur, minWidth: 0 }}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{machine ? machine.name : 'Vybrat stroj (volitelné)'}</span>
+            <Icon.ChevronRight size={15} style={{ color: theme.textFaint, flexShrink: 0, marginLeft: 8 }} />
+          </button>
+          {machine && (
+            <button
+              onClick={() => setMachine(null)}
+              style={{ width: 44, flexShrink: 0, background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, backdropFilter: theme.blur }}
+            >
+              <Icon.X size={17} />
+            </button>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+          {SEARCH_TYPE_OPTIONS.map(opt => {
+            const active = selectedTypes.includes(opt.key);
+            const c = theme[opt.colorKey];
+            const s = theme[`${opt.colorKey}Soft`];
+            return (
+              <button
+                key={opt.key}
+                onClick={() => toggleType(opt.key)}
+                style={{ background: active ? s : theme.surface, border: `1.5px solid ${active ? c : theme.border}`, borderRadius: 10, padding: '7px 12px', color: active ? c : theme.textDim, fontSize: 12.5, fontWeight: 700 }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px 20px' }}>
+        {!hasFilters && (
+          <div style={{ textAlign: 'center', padding: '32px 20px', color: theme.textFaint, fontSize: 13.5 }}>
+            Zadej text, vyber stroj nebo typ opravy pro hledání.
+          </div>
+        )}
+        {hasFilters && results.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '32px 20px', color: theme.textFaint, fontSize: 13.5 }}>
+            Žádné záznamy neodpovídají hledání.
+          </div>
+        )}
+        {hasFilters && results.length > 0 && (
+          <>
+            <div style={{ fontSize: 12, color: theme.textFaint, marginBottom: 10 }}>{results.length} {results.length === 1 ? 'záznam' : results.length < 5 ? 'záznamy' : 'záznamů'}</div>
+            {results.map(r => {
+              const color = r.type === 'EM' ? (r.emSubtype === 'bezProstoje' ? theme.emAlt : theme.em) : (r.cmSubtype === 'oprava' ? theme.cmAlt : theme.cm);
+              const soft = r.type === 'EM' ? (r.emSubtype === 'bezProstoje' ? theme.emAltSoft : theme.emSoft) : (r.cmSubtype === 'oprava' ? theme.cmAltSoft : theme.cmSoft);
+              const displayDuration = r.type === 'EM' ? (r.downtimeMs ?? (r.endTime - r.startTime)) : (r.endTime - r.startTime);
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => onOpenRecord(r)}
+                  style={{
+                    display: 'flex', width: '100%', textAlign: 'left', marginBottom: 8,
+                    background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 16,
+                    overflow: 'hidden', backdropFilter: theme.blur,
+                  }}
+                >
+                  <div style={{ width: 4, background: color, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0, padding: '13px 15px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, gap: 10 }}>
+                      <span style={{ display: 'block', fontSize: 15.5, fontWeight: 700, color: theme.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{r.machineName}</span>
+                      <span style={{ fontSize: 10, fontWeight: 800, padding: '3px 9px', borderRadius: 7, letterSpacing: 0.4, color, background: soft, flexShrink: 0, marginTop: 1 }}>{r.type}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 2 }}>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5, fontWeight: 600, color: theme.textFaint }}>{fmtDateLabel(r.date)}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12, fontWeight: 500, color: theme.textDim }}>
+                        {fmtTime(r.startTime)}–{fmtTime(r.endTime)}
+                        <span style={{ color: theme.textFaint }}> · {fmtDurationMin(displayDuration)}</span>
+                      </span>
+                      {r.wo && (
+                        <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 10.5, fontWeight: 700, color: theme.textDim, background: theme.surfaceElevated, padding: '2px 7px', borderRadius: 6, letterSpacing: 0.3 }}>
+                          WO {r.wo}
+                        </span>
+                      )}
+                    </div>
+                    {r.issue && <div style={{ fontSize: 13.5, fontWeight: 600, color, marginTop: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.issue}</div>}
+                    {r.materials?.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: theme.textFaint, marginTop: 4 }}>
+                        <Icon.Wrench size={11} /> {r.materials.map(fmtMaterialLine).join(', ')}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </>
+        )}
+      </div>
+
+      {showMachinePicker && (
+        <MachinePicker
+          theme={theme} db={db}
+          onPick={(m) => { setMachine(m); setShowMachinePicker(false); }}
+          onCancel={() => setShowMachinePicker(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 function DayScreen({ theme, db, dateKey, onBack, onHome, onOpenRecord, onAddRecord, refreshTick }) {
   const [records, setRecords] = useState([]);
 
@@ -2414,11 +2719,9 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
               <Icon.ChevronRight size={20} />
             </button>
           )}
-          <img
-            src={view.photos[lightboxIndex]}
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: '92vw', maxHeight: '86vh', objectFit: 'contain', borderRadius: 8 }}
-          />
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <ZoomableImage src={view.photos[lightboxIndex]} />
+          </div>
         </div>
       )}
 
@@ -2590,9 +2893,41 @@ function App() {
     setActiveSession(updated);
   }
 
+  async function removeSessionPhoto(idx) {
+    if (!activeSession) return;
+    const updated = { ...activeSession, photos: (activeSession.photos || []).filter((_, i) => i !== idx) };
+    await db.put('activeSession', updated);
+    setActiveSession(updated);
+  }
+
+  // Materiál přidaný/upravený/smazaný během běžícího timeru se ukládá rovnou
+  // do activeSession stejně jako fotky — přežije zavření appky, a po STOP se
+  // spolu s fotkami předá do RecordForm přes pendingSession.
+  async function addSessionMaterial(mat) {
+    if (!activeSession) return;
+    const updated = { ...activeSession, materials: [...(activeSession.materials || []), mat] };
+    await db.put('activeSession', updated);
+    setActiveSession(updated);
+  }
+
+  async function updateSessionMaterial(idx, mat) {
+    if (!activeSession) return;
+    const current = activeSession.materials || [];
+    const updated = { ...activeSession, materials: current.map((m, i) => i === idx ? mat : m) };
+    await db.put('activeSession', updated);
+    setActiveSession(updated);
+  }
+
+  async function removeSessionMaterial(idx) {
+    if (!activeSession) return;
+    const updated = { ...activeSession, materials: (activeSession.materials || []).filter((_, i) => i !== idx) };
+    await db.put('activeSession', updated);
+    setActiveSession(updated);
+  }
+
   async function stopTimer() {
     const endTime = Date.now();
-    setPendingSession({ startTime: activeSession.startTime, endTime, photos: activeSession.photos || [] });
+    setPendingSession({ startTime: activeSession.startTime, endTime, photos: activeSession.photos || [], materials: activeSession.materials || [] });
     await db.delete('activeSession', 'active');
     setActiveSession(null);
     push('pickMachine');
@@ -2700,6 +3035,10 @@ function App() {
             onOpenSettings={() => push('settings')}
             onOpenToday={goToTodayInHistory}
             onAddPhoto={addSessionPhoto}
+            onRemovePhoto={removeSessionPhoto}
+            onAddMaterial={addSessionMaterial}
+            onUpdateMaterial={updateSessionMaterial}
+            onRemoveMaterial={removeSessionMaterial}
           />
         )}
         {route.screen === 'machines' && (
@@ -2765,13 +3104,16 @@ function App() {
           />
         )}
         {route.screen === 'year' && (
-          <YearScreen theme={theme} db={db} onBack={atRoot ? undefined : () => pop(1)} onHome={() => switchTab('timer')} onOpenMonth={(monthKey) => push('month', { monthKey })} onAddRecord={startBackfillWithPicker} refreshTick={refreshTick} />
+          <YearScreen theme={theme} db={db} onBack={atRoot ? undefined : () => pop(1)} onHome={() => switchTab('timer')} onOpenMonth={(monthKey) => push('month', { monthKey })} onAddRecord={startBackfillWithPicker} onSearch={(scope) => push('search', { scope })} refreshTick={refreshTick} />
         )}
         {route.screen === 'month' && (
-          <MonthScreen theme={theme} db={db} monthKey={route.monthKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenDay={(dateKey) => push('day', { dateKey })} onAddRecord={startBackfillWithPicker} refreshTick={refreshTick} onNavigateMonth={(mk) => replaceTop({ monthKey: mk })} />
+          <MonthScreen theme={theme} db={db} monthKey={route.monthKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenDay={(dateKey) => push('day', { dateKey })} onAddRecord={startBackfillWithPicker} onSearch={(scope) => push('search', { scope })} refreshTick={refreshTick} onNavigateMonth={(mk) => replaceTop({ monthKey: mk })} />
         )}
         {route.screen === 'day' && (
           <DayScreen theme={theme} db={db} dateKey={route.dateKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenRecord={(r) => push('recordDetail', { record: r })} onAddRecord={startBackfill} refreshTick={refreshTick} />
+        )}
+        {route.screen === 'search' && (
+          <SearchScreen theme={theme} db={db} scope={route.scope} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenRecord={(r) => push('recordDetail', { record: r })} />
         )}
         {route.screen === 'recordDetail' && (
           <RecordDetail theme={theme} db={db} record={route.record} onBack={() => pop(1)} onHome={() => switchTab('timer')} onDelete={deleteRecord} onUpdated={onRecordUpdated} resolvedThemeName={resolvedThemeName} />
@@ -3572,7 +3914,9 @@ function MachineFormScreen({ theme, db, machine, onBack, onSaved, onDeleted }) {
           <button onClick={() => setLightboxIndex(null)} style={{ position: 'absolute', top: 16, right: 16, width: 42, height: 42, borderRadius: 12, background: 'rgba(255,255,255,0.1)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
             <Icon.X size={20} weight="bold" />
           </button>
-          <img src={photos[lightboxIndex]} onClick={(e) => e.stopPropagation()} style={{ maxWidth: '92vw', maxHeight: '86vh', objectFit: 'contain', borderRadius: 8 }} />
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <ZoomableImage src={photos[lightboxIndex]} />
+          </div>
         </div>
       )}
 
@@ -3601,6 +3945,97 @@ function fmtGalleryDateHeading(dateKey) {
   if (dateKey === yesterday) return 'Včera';
   const [y, m, d] = dateKey.split('-').map(Number);
   return `${d}. ${MONTH_NAMES[m - 1]} ${y}`;
+}
+
+// Fotka v lightboxu s podporou přiblížení/oddálení — pinch gesto na dotykových
+// zařízeních (dva prsty), kolečko myši s Ctrl/pinch trackpad na desktopu, a
+// tažení pro posun, když je fotka přiblížená. Dvojklik/dvojťuk mezi 1x a 2.5x
+// přepíná rychlé přiblížení. Používá se ve všech lightboxech appky, ať je
+// prohlížení fotek konzistentní všude.
+function ZoomableImage({ src }) {
+  const [scale, setScale] = useState(1);
+  const [translate, setTranslate] = useState({ x: 0, y: 0 });
+  const containerRef = useRef(null);
+  const stateRef = useRef({ startDist: 0, startScale: 1, startTranslate: { x: 0, y: 0 }, startMid: { x: 0, y: 0 }, panStart: null });
+
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+  function dist(touches) {
+    const [a, b] = touches;
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+
+  function midpoint(touches) {
+    const [a, b] = touches;
+    return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+  }
+
+  function handleTouchStart(e) {
+    if (e.touches.length === 2) {
+      stateRef.current.startDist = dist(e.touches);
+      stateRef.current.startScale = scale;
+      stateRef.current.startMid = midpoint(e.touches);
+      stateRef.current.startTranslate = translate;
+    } else if (e.touches.length === 1 && scale > 1) {
+      stateRef.current.panStart = { x: e.touches[0].clientX - translate.x, y: e.touches[0].clientY - translate.y };
+    }
+  }
+
+  function handleTouchMove(e) {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const newDist = dist(e.touches);
+      const ratio = newDist / (stateRef.current.startDist || newDist);
+      const newScale = clamp(stateRef.current.startScale * ratio, 1, 4);
+      setScale(newScale);
+      setTranslate(clampTranslate(stateRef.current.startTranslate, newScale));
+    } else if (e.touches.length === 1 && stateRef.current.panStart) {
+      e.preventDefault();
+      const next = { x: e.touches[0].clientX - stateRef.current.panStart.x, y: e.touches[0].clientY - stateRef.current.panStart.y };
+      setTranslate(clampTranslate(next, scale));
+    }
+  }
+
+  function handleTouchEnd(e) {
+    if (e.touches.length === 0) stateRef.current.panStart = null;
+  }
+
+  function clampTranslate(t, s) {
+    // Nedovolí odtáhnout fotku úplně mimo viditelnou oblast — čím větší zoom,
+    // tím větší povolený posun, ať jde prohlédnout celou přiblíženou fotku.
+    const maxOffset = (s - 1) * 160;
+    return { x: clamp(t.x, -maxOffset, maxOffset), y: clamp(t.y, -maxOffset, maxOffset) };
+  }
+
+  function handleWheel(e) {
+    e.preventDefault();
+    const next = clamp(scale - e.deltaY * 0.0025, 1, 4);
+    setScale(next);
+    if (next === 1) setTranslate({ x: 0, y: 0 });
+  }
+
+  function handleDoubleClick() {
+    if (scale > 1) { setScale(1); setTranslate({ x: 0, y: 0 }); }
+    else setScale(2.5);
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}
+      onWheel={handleWheel} onDoubleClick={handleDoubleClick}
+      style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', touchAction: 'none' }}
+    >
+      <img
+        src={src} draggable={false}
+        style={{
+          maxWidth: '92vw', maxHeight: '86vh', objectFit: 'contain', borderRadius: 8,
+          transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
+          transition: stateRef.current.panStart ? 'none' : 'transform 0.15s ease',
+        }}
+      />
+    </div>
+  );
 }
 
 function GalleryScreen({ theme, db, refreshTick, onOpenRecord, columns, onColumnsChange }) {
@@ -3950,7 +4385,7 @@ function GalleryScreen({ theme, db, refreshTick, onOpenRecord, columns, onColumn
                 <Icon.Back size={20} />
               </button>
             )}
-            <img src={current.url} style={{ maxWidth: '92vw', maxHeight: '76vh', objectFit: 'contain', borderRadius: 8 }} />
+            <ZoomableImage src={current.url} />
             {lightbox.index < lightbox.items.length - 1 && (
               <button
                 onClick={() => setLightbox(l => ({ ...l, index: l.index + 1 }))}
