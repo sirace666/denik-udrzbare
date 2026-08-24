@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.36';
+const APP_VERSION = '6.37';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -2187,8 +2187,22 @@ function MaterialList({ theme, materials, editingIdx, onEdit, onRemove }) {
           border: `1px solid ${editingIdx === i ? theme.primary : theme.border}`,
           borderRadius: 10, padding: '9px 8px 9px 12px',
         }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {fmtMaterialLine(mat)}
+          <span style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 7, overflow: 'hidden' }}>
+            {mat.qty > 0 && (
+              <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 700, color: theme.text, fontVariantNumeric: 'tabular-nums' }}>
+                {mat.qty}×
+              </span>
+            )}
+            {mat.name && (
+              <span style={{ fontSize: 13, fontWeight: 600, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {mat.name}
+              </span>
+            )}
+            {mat.code && (
+              <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: theme.textFaint, background: theme.bgSubtle, border: `1px solid ${theme.border}`, borderRadius: 6, padding: '2px 6px', fontVariantNumeric: 'tabular-nums', letterSpacing: 0.3 }}>
+                {mat.code}
+              </span>
+            )}
           </span>
           <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
             <button onClick={() => onEdit(i)} style={{ width: 26, height: 26, borderRadius: 8, background: 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint }}>
@@ -2593,12 +2607,12 @@ function RecordDetail({ theme, db, record, onBack, onHome, onDelete, onUpdated, 
                       />
                     ) : (
                       <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, background: theme.surfaceElevated, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '10px 14px' }}>
-                        {mat.qty > 0 && (
-                          <span style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 800, color: theme.primary, background: theme.primarySoft, borderRadius: 7, padding: '3px 8px', fontVariantNumeric: 'tabular-nums' }}>
-                            {mat.qty}×
-                          </span>
-                        )}
                         <span style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 7, overflow: 'hidden' }}>
+                          {mat.qty > 0 && (
+                            <span style={{ flexShrink: 0, fontSize: 13.5, fontWeight: 700, color: theme.text, fontVariantNumeric: 'tabular-nums' }}>
+                              {mat.qty}×
+                            </span>
+                          )}
                           {mat.name && (
                             <span style={{ fontSize: 13.5, fontWeight: 600, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {mat.name}
