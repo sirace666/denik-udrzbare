@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.40';
+const APP_VERSION = '6.41';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -527,10 +527,10 @@ function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings,
       </div>
 
       <div style={S.timerWrap}>
-        <div style={{ ...S.liveDate, color: theme.textDim, textAlign: 'center', marginBottom: 4 }}>
+        <div style={{ ...S.liveDate, color: theme.textDim, textAlign: 'center', marginBottom: 4, fontSize: isDesktop ? 15 : undefined }}>
           {nowDate.toLocaleDateString('cs-CZ', { weekday: 'long', day: 'numeric', month: 'long' })}
         </div>
-        <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 38, fontWeight: 600, color: theme.text, letterSpacing: 0.5, marginBottom: 24 }}>
+        <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: isDesktop ? 46 : 38, fontWeight: 600, color: theme.text, letterSpacing: 0.5, marginBottom: 24 }}>
           {nowDate.getHours()}:{pad(nowDate.getMinutes())}
         </div>
 
@@ -539,6 +539,7 @@ function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings,
           onTouchStart={() => setPressed(true)} onTouchEnd={() => setPressed(false)}
           style={{
             ...S.mainButton,
+            width: isDesktop ? 240 : 196, height: isDesktop ? 240 : 196,
             background: accentSoft,
             border: `2.5px solid ${accentColor}`,
             color: accentColor,
@@ -547,8 +548,11 @@ function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings,
           }}
           onClick={activeSession ? onStop : onStart}
         >
-          <div style={activeSession ? S.stopSquare : S.startTriangle} />
-          <span style={S.mainButtonLabel}>{activeSession ? 'STOP' : 'START'}</span>
+          <div style={activeSession
+            ? { ...S.stopSquare, width: isDesktop ? 44 : 36, height: isDesktop ? 44 : 36 }
+            : { ...S.startTriangle, borderTopWidth: isDesktop ? 22 : 18, borderBottomWidth: isDesktop ? 22 : 18, borderLeftWidth: isDesktop ? 37 : 30 }
+          } />
+          <span style={{ ...S.mainButtonLabel, fontSize: isDesktop ? 19 : 16 }}>{activeSession ? 'STOP' : 'START'}</span>
         </button>
 
         <div style={{ marginTop: 16, minHeight: 96, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -1340,6 +1344,7 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
 // YEAR SCREEN — dlaždice měsíců s počty a časem prostojů
 // ============================================================
 function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSearch, refreshTick, initialYear }) {
+  const isDesktop = useViewportWidth();
   const [records, setRecords] = useState([]);
   const [year, setYear] = useState(initialYear || new Date().getFullYear());
 
@@ -1396,27 +1401,30 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
         ><Icon.ChevronRight size={17} /></button>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, padding: '10px 20px 16px' }}>
-        <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
-          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.cm }}>{yearStats.cm}</div>
-          <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>CM</div>
-        </Card>
-        <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
-          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.cmAlt }}>{yearStats.cmOprava}</div>
-          <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>CM Oprava</div>
-        </Card>
-        <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
-          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.em }}>{yearStats.em}</div>
-          <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>EM</div>
-        </Card>
-        <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
-          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.text }}>{fmtDurationMin(yearStats.emTime)}</div>
-          <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>prostoje</div>
-        </Card>
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 20px 16px' }}>
+        <div style={{ display: 'flex', gap: 8, width: '100%', maxWidth: isDesktop ? 760 : undefined }}>
+          <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
+            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.cm }}>{yearStats.cm}</div>
+            <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>CM</div>
+          </Card>
+          <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
+            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.cmAlt }}>{yearStats.cmOprava}</div>
+            <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>CM Oprava</div>
+          </Card>
+          <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
+            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.em }}>{yearStats.em}</div>
+            <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>EM</div>
+          </Card>
+          <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
+            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.text }}>{fmtDurationMin(yearStats.emTime)}</div>
+            <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>prostoje</div>
+          </Card>
+        </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px 20px', display: 'flex', justifyContent: 'center' }}>
+        <div style={{ width: '100%', maxWidth: isDesktop ? 760 : undefined }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isDesktop ? 'repeat(4, 1fr)' : '1fr 1fr', gap: 10 }}>
           {MONTH_NAMES.map((name, idx) => {
             const monthNum = idx + 1;
             const data = monthsInYear[monthNum];
@@ -1448,6 +1456,7 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
           })}
         </div>
         <div style={{ height: 24 }} />
+        </div>
       </div>
     </div>
   );
@@ -1457,6 +1466,7 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
 // MONTH SCREEN — dny v měsíci s opravami
 // ============================================================
 function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddRecord, onSearch, refreshTick, onNavigateMonth }) {
+  const isDesktop = useViewportWidth();
   const [records, setRecords] = useState([]);
 
   const load = useCallback(async () => {
@@ -1538,23 +1548,26 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
         ><Icon.ChevronRight size={17} /></button>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, padding: '10px 20px 12px' }}>
-        <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
-          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.cm }}>{monthStats.cm}</div>
-          <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>CM</div>
-        </Card>
-        <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
-          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.em }}>{monthStats.em}</div>
-          <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>EM</div>
-        </Card>
-        <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
-          <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.text }}>{fmtDurationMin(monthStats.emTime)}</div>
-          <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>prostoje</div>
-        </Card>
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 20px 12px' }}>
+        <div style={{ display: 'flex', gap: 10, width: '100%', maxWidth: isDesktop ? 640 : undefined }}>
+          <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
+            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.cm }}>{monthStats.cm}</div>
+            <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>CM</div>
+          </Card>
+          <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
+            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.em }}>{monthStats.em}</div>
+            <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>EM</div>
+          </Card>
+          <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
+            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.text }}>{fmtDurationMin(monthStats.emTime)}</div>
+            <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>prostoje</div>
+          </Card>
+        </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 16px 20px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 16px 20px', display: 'flex', justifyContent: 'center' }}>
         <div style={{
+          width: '100%', maxWidth: isDesktop ? 640 : undefined,
           border: isCurrentMonth ? `1.5px solid ${theme.primary}44` : '1.5px solid transparent',
           borderRadius: 16, padding: isCurrentMonth ? 8 : 0,
         }}>
@@ -3368,6 +3381,7 @@ function truncateMachineName(name) {
 }
 
 function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColumnsChange, onOpenMachine, onOpenCategory, onCreateMachine, onCreateCategory, onDataChanged }) {
+  const isDesktop = useViewportWidth();
   const [machines, setMachines] = useState([]);
   const [categories, setCategories] = useState([]);
   const [collapsed, setCollapsed] = useState(() => new Set());
@@ -3671,7 +3685,7 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
                   )}
                 </div>
                 {!isCollapsed && (
-                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${machineColumns}, 1fr)`, gap: 7 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isDesktop ? `repeat(${machineColumns}, minmax(0, 220px))` : `repeat(${machineColumns}, 1fr)`, gap: 7 }}>
                     {group.items.map(m => {
                       const machineDropKey = `machine:${m.id}`;
                       const isMachineDropTarget = dragState?.overKey === machineDropKey && dragState?.id !== m.id;
@@ -3699,15 +3713,15 @@ function MachinesScreen({ theme, db, refreshTick, machineColumns, onMachineColum
                         >
                           {MIconComp && (
                             <div style={{ color: mColor || theme.textDim, display: 'flex' }}>
-                              <MIconComp size={machineColumns <= 3 ? 15 : 12} weight="fill" />
+                              <MIconComp size={isDesktop ? 16 : (machineColumns <= 3 ? 15 : 12)} weight="fill" />
                             </div>
                           )}
-                          <div style={{ fontSize: machineColumns <= 3 ? 11.5 : 10, fontWeight: 600, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%', minWidth: 0 }}>
-                            {truncateMachineName(m.name)}
+                          <div style={{ fontSize: isDesktop ? 13 : (machineColumns <= 3 ? 11.5 : 10), fontWeight: 600, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%', minWidth: 0 }}>
+                            {isDesktop ? m.name : truncateMachineName(m.name)}
                           </div>
                           {m.photos?.length > 0 && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, color: theme.textFaint }}>
-                              <Icon.Image size={9} /><span>{m.photos.length}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: isDesktop ? 10.5 : 9, color: theme.textFaint }}>
+                              <Icon.Image size={isDesktop ? 10 : 9} /><span>{m.photos.length}</span>
                             </div>
                           )}
                         </button>
@@ -4238,6 +4252,7 @@ function ZoomableImage({ src }) {
 }
 
 function GalleryScreen({ theme, db, refreshTick, onOpenRecord, columns, onColumnsChange }) {
+  const isDesktop = useViewportWidth();
   const [records, setRecords] = useState([]);
   const [lightbox, setLightbox] = useState(null); // { photos: [{url, record}], index }
   const [copyFeedback, setCopyFeedback] = useState(false);
@@ -4472,7 +4487,7 @@ function GalleryScreen({ theme, db, refreshTick, onOpenRecord, columns, onColumn
                     </button>
                   )}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns}, 1fr)`, gap: 6 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isDesktop ? `repeat(${columns}, minmax(0, 220px))` : `repeat(${columns}, 1fr)`, gap: 6 }}>
                   {section.items.map((item, iIdx) => {
                     const isSelected = selected.has(item.key);
                     return (

@@ -1,6 +1,8 @@
 # Deník údržbáře – appka pro sledování oprav
 
-Appka, která zjednoduší život lidem na opravě. Jednoduchá webová appka (PWA) pro záznam oprav a údržby strojů — časomíra, historie, správa strojů, materiál, fotky. Appka je zdarma, funguje offline a neukládá žádná data mimo tvůj telefon.
+Appka, která zjednoduší život lidem na opravě. Jednoduchá webová appka (PWA) pro záznam oprav a údržby strojů — časomíra, historie, správa strojů, materiál, fotky. Appka je zdarma, funguje offline a neukládá žádná data mimo tvoje zařízení.
+
+**Appka funguje na počítači i na mobilu** – stejná appka, stejná adresa, appka sama pozná, na čem ji otevíráš, a přizpůsobí tomu rozvržení (na PC širší mřížky a postranní menu, na mobilu jednosloupcový layout s lištou dole). Klidně ji používej na obojím zároveň – jen si pamatuj, že data (viz níže) zůstávají oddělená pro každé zařízení/prohlížeč zvlášť.
 
 ## Co appka umí
 
@@ -38,7 +40,17 @@ icon-512.png     – ikona appky (velká)
 3. V nastavení repozitáře: **Settings → Pages → Source: Deploy from branch → Branch: main → / (root)**.
 4. Za chvíli appka poběží na `https://tvoje-jmeno.github.io/denik-udrzbare/`.
 
-## Instalace na plochu – Android
+## Používání na počítači (Windows/Mac/Linux)
+
+Appka běží v běžném prohlížeči (Chrome, Edge, Firefox) – stačí otevřít adresu appky a rovnou appku používat, žádná instalace potřeba. Appka na širší obrazovce sama přepne na desktopové rozvržení (postranní menu, širší přehledy) – viz seznam funkcí výše.
+
+Appku jde volitelně i „nainstalovat" jako samostatné okno bez adresního řádku prohlížeče (funguje v Chrome a Edge):
+
+1. Otevři appku v prohlížeči **Chrome** nebo **Edge**.
+2. V adresním řádku vpravo klikni na ikonu instalace (malý monitor s šipkou), nebo přes nabídku prohlížeče (tři tečky) vyber **„Nainstalovat appku"**.
+3. Appka se otevře ve vlastním okně a přidá se do nabídky Start / Launchpadu jako běžný program.
+
+## Instalace na plochu telefonu – Android
 
 1. Otevři appku v prohlížeči **Chrome** na adrese, kde appka běží.
 2. Klepni na nabídku (tři tečky vpravo nahoře).
@@ -46,7 +58,7 @@ icon-512.png     – ikona appky (velká)
 4. Potvrď název a klepni na **„Přidat"** / **„Instalovat"**.
 5. Appka se objeví na ploše jako běžná aplikace a půjde spouštět i offline.
 
-## Instalace na plochu – iOS (iPhone/iPad)
+## Instalace na plochu telefonu – iOS (iPhone/iPad)
 
 1. Otevři appku v prohlížeči **Safari** (musí to být Safari, ne Chrome – jinak nabídka pro přidání na plochu chybí).
 2. Klepni na tlačítko **Sdílet** (ikona čtverečku se šipkou dole uprostřed lišty).
@@ -54,15 +66,15 @@ icon-512.png     – ikona appky (velká)
 4. Potvrď název a klepni na **„Přidat"** vpravo nahoře.
 5. Appka se objeví na ploše jako běžná aplikace a půjde spouštět i offline.
 
-Appka se pak chová jako běžná nativní aplikace – vlastní ikona, běží na celou obrazovku bez adresního řádku prohlížeče, funguje i bez připojení k internetu.
+Appka nainstalovaná na ploše (PC i mobil) se pak chová jako běžná aplikace – vlastní ikona, běží bez adresního řádku prohlížeče, funguje i bez připojení k internetu.
 
 ## Důležité – kam mizí data
 
-Data (stroje, záznamy oprav, fotky) se ukládají **jen v tomto konkrétním telefonu a jen v tomto konkrétním prohlížeči**. To znamená:
+Data (stroje, záznamy oprav, fotky) se ukládají **jen v tomto konkrétním zařízení a jen v tomto konkrétním prohlížeči**. To znamená:
 
 - Když appku odinstaluješ nebo vymažeš data prohlížeče, data zmizí. Appka má v Nastavení **export/import zálohy** – vyplatí se ji občas udělat.
-- Data se nezobrazí na jiném telefonu ani na PC – jsou jen tady, dokud je ručně nepřeneseš přes export/import.
-- Pokud budeš chtít v budoucnu vidět historii i odjinud (PC, jiný telefon) automaticky, řešením by bylo napojit appku na cloudové úložiště (např. Firebase) – ale to už je větší krok, ne první.
+- Data z telefonu se **automaticky nezobrazí** na počítači ani naopak – i když appku otevřeš na obou, každé zařízení má svoje vlastní, oddělené záznamy, dokud je ručně nepřeneseš přes export/import.
+- Pokud budeš chtít v budoucnu vidět historii i odjinud (PC, jiný telefon) automaticky a najednou, řešením by bylo napojit appku na cloudové úložiště (např. Firebase) – ale to už je větší krok, ne první.
 
 ## Aktualizace appky
 
