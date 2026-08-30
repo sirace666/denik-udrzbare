@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.41';
+const APP_VERSION = '6.43';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -398,6 +398,20 @@ function useViewportWidth() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
   return isDesktop;
+}
+
+// Vykreslí své děti přímo do document.body, mimo aktuální místo appky v
+// DOM stromu. Appka na spoustě míst používá `backdropFilter` na kartách
+// (efekt "matného skla"), a podle CSS specifikace `backdrop-filter` na
+// jakémkoliv předkovi vytváří nový "containing block" pro potomky s
+// `position: fixed` — takže modal/picker vykreslený uvnitř takové karty by
+// se pak nesprávně centroval vůči té kartě, ne vůči celé obrazovce (nápadné
+// hlavně na desktopu, kde je karta jen malá část širší stránky). Portal
+// tenhle problém obchází úplně — position:fixed uvnitř něj je vždy
+// spolehlivě vztažený k viewportu.
+function Portal({ children }) {
+  if (typeof document === 'undefined') return null;
+  return ReactDOM.createPortal(children, document.body);
 }
 
 function useTheme() {
@@ -1402,7 +1416,7 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 20px 16px' }}>
-        <div style={{ display: 'flex', gap: 8, width: '100%', maxWidth: isDesktop ? 760 : undefined }}>
+        <div style={{ display: 'flex', gap: 8, width: '100%' }}>
           <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
             <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.cm }}>{yearStats.cm}</div>
             <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>CM</div>
@@ -1423,7 +1437,7 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px 20px', display: 'flex', justifyContent: 'center' }}>
-        <div style={{ width: '100%', maxWidth: isDesktop ? 760 : undefined }}>
+        <div style={{ width: '100%' }}>
         <div style={{ display: 'grid', gridTemplateColumns: isDesktop ? 'repeat(4, 1fr)' : '1fr 1fr', gap: 10 }}>
           {MONTH_NAMES.map((name, idx) => {
             const monthNum = idx + 1;
@@ -1549,7 +1563,7 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 20px 12px' }}>
-        <div style={{ display: 'flex', gap: 10, width: '100%', maxWidth: isDesktop ? 640 : undefined }}>
+        <div style={{ display: 'flex', gap: 10, width: '100%' }}>
           <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
             <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.cm }}>{monthStats.cm}</div>
             <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>CM</div>
@@ -1567,7 +1581,7 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 16px 20px', display: 'flex', justifyContent: 'center' }}>
         <div style={{
-          width: '100%', maxWidth: isDesktop ? 640 : undefined,
+          width: '100%',
           border: isCurrentMonth ? `1.5px solid ${theme.primary}44` : '1.5px solid transparent',
           borderRadius: 16, padding: isCurrentMonth ? 8 : 0,
         }}>
@@ -2051,6 +2065,7 @@ function CustomTimePicker({ theme, initialValue, onConfirm, onCancel }) {
   const [minute, setMinute] = useState(Math.round(initial.getMinutes() / 5) * 5 % 60);
   const hourRef = useRef(null);
   const minuteRef = useRef(null);
+  const scrollEndTimer = useRef(null);
   const ITEM_H = 44;
 
   const hours = Array.from({ length: 24 }, (_, i) => i);
@@ -2062,10 +2077,31 @@ function CustomTimePicker({ theme, initialValue, onConfirm, onCancel }) {
     minuteRef.current?.scrollTo({ top: (minute / 5) * ITEM_H, behavior: 'instant' });
   }, []);
 
+  // Kolečko myši na desktopu posílá scroll v mnohem větších a nepravidelnějších
+  // krocích než dotykové táhnutí na mobilu, takže počítání za KAŽDÝ scroll
+  // event snadno "přeskočí" o víc řádků, než uživatel čekal. Místo toho appka
+  // čeká, až scroll na chvíli ustane (debounce), a teprve pak dopočítá a
+  // dorovná na nejbližší řádek — jeden spolehlivý výsledek místo řady
+  // nepřesných mezikroků.
   function handleScroll(ref, setter, step, max) {
-    const idx = Math.round(ref.current.scrollTop / ITEM_H);
-    const clamped = Math.max(0, Math.min(max, idx));
-    setter(clamped * step);
+    clearTimeout(scrollEndTimer.current);
+    scrollEndTimer.current = setTimeout(() => {
+      if (!ref.current) return;
+      const idx = Math.round(ref.current.scrollTop / ITEM_H);
+      const clamped = Math.max(0, Math.min(max, idx));
+      setter(clamped * step);
+      ref.current.scrollTo({ top: clamped * ITEM_H, behavior: 'smooth' });
+    }, 90);
+  }
+
+  function pickHour(h) {
+    setHour(h);
+    hourRef.current?.scrollTo({ top: h * ITEM_H, behavior: 'smooth' });
+  }
+
+  function pickMinute(m) {
+    setMinute(m);
+    minuteRef.current?.scrollTo({ top: (m / 5) * ITEM_H, behavior: 'smooth' });
   }
 
   function confirm() {
@@ -2075,6 +2111,7 @@ function CustomTimePicker({ theme, initialValue, onConfirm, onCancel }) {
   }
 
   return (
+    <Portal>
     <div onClick={onCancel} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 90 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: theme.surfaceSolid, border: `1px solid ${theme.borderStrong}`, borderRadius: 22, padding: 20, width: '100%', maxWidth: 300, boxShadow: theme.shadow }}>
         <div style={{ fontSize: 15, fontWeight: 700, color: theme.text, textAlign: 'center', marginBottom: 14 }}>
@@ -2092,11 +2129,15 @@ function CustomTimePicker({ theme, initialValue, onConfirm, onCancel }) {
           >
             <div style={{ height: ITEM_H }} />
             {hours.map(h => (
-              <div key={h} style={{
-                height: ITEM_H, display: 'flex', alignItems: 'center', justifyContent: 'center', scrollSnapAlign: 'start',
-                fontSize: 20, fontWeight: h === hour ? 700 : 500, fontVariantNumeric: 'tabular-nums',
-                color: h === hour ? theme.text : theme.textFaint,
-              }}>{pad(h)}</div>
+              <button
+                key={h}
+                onClick={() => pickHour(h)}
+                style={{
+                  width: '100%', height: ITEM_H, display: 'flex', alignItems: 'center', justifyContent: 'center', scrollSnapAlign: 'start',
+                  fontSize: 20, fontWeight: h === hour ? 700 : 500, fontVariantNumeric: 'tabular-nums',
+                  color: h === hour ? theme.text : theme.textFaint, background: 'none', border: 'none',
+                }}
+              >{pad(h)}</button>
             ))}
             <div style={{ height: ITEM_H }} />
           </div>
@@ -2108,11 +2149,15 @@ function CustomTimePicker({ theme, initialValue, onConfirm, onCancel }) {
           >
             <div style={{ height: ITEM_H }} />
             {minutes.map(m => (
-              <div key={m} style={{
-                height: ITEM_H, display: 'flex', alignItems: 'center', justifyContent: 'center', scrollSnapAlign: 'start',
-                fontSize: 20, fontWeight: m === minute ? 700 : 500, fontVariantNumeric: 'tabular-nums',
-                color: m === minute ? theme.text : theme.textFaint,
-              }}>{pad(m)}</div>
+              <button
+                key={m}
+                onClick={() => pickMinute(m)}
+                style={{
+                  width: '100%', height: ITEM_H, display: 'flex', alignItems: 'center', justifyContent: 'center', scrollSnapAlign: 'start',
+                  fontSize: 20, fontWeight: m === minute ? 700 : 500, fontVariantNumeric: 'tabular-nums',
+                  color: m === minute ? theme.text : theme.textFaint, background: 'none', border: 'none',
+                }}
+              >{pad(m)}</button>
             ))}
             <div style={{ height: ITEM_H }} />
           </div>
@@ -2123,6 +2168,7 @@ function CustomTimePicker({ theme, initialValue, onConfirm, onCancel }) {
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -2142,6 +2188,7 @@ function NumberPicker({ theme, initialValue, onConfirm, onCancel }) {
   }, []);
 
   return (
+    <Portal>
     <div onClick={onCancel} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 90 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: theme.surfaceSolid, border: `1px solid ${theme.borderStrong}`, borderRadius: 22, padding: 16, width: '100%', maxWidth: 200, boxShadow: theme.shadow }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: theme.textFaint, textAlign: 'center', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
@@ -2164,6 +2211,7 @@ function NumberPicker({ theme, initialValue, onConfirm, onCancel }) {
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -2876,7 +2924,7 @@ function PhotoAddButtons({ theme, onFiles }) {
 function CenteredFormWrap({ isDesktop, children }) {
   if (!isDesktop) return children;
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', justifyContent: 'center', overflow: 'hidden' }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', justifyContent: 'center' }}>
       <div style={{ width: '100%', maxWidth: 640, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         {children}
       </div>
@@ -3155,7 +3203,7 @@ function App() {
 
   return (
     <div style={{ height: '100vh', background: theme.bg, transition: 'background 0.2s ease', display: 'flex', flexDirection: isDesktop ? 'row' : 'column' }}>
-      {isDesktop && atRoot && (
+      {isDesktop && (
         <SideNav theme={theme} activeTab={activeTab} onSwitch={switchTab} onOpenSettings={() => push('settings')} />
       )}
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -3255,10 +3303,14 @@ function App() {
           </CenteredFormWrap>
         )}
         {route.screen === 'year' && (
-          <YearScreen theme={theme} db={db} onBack={atRoot ? undefined : () => pop(1)} onHome={() => switchTab('timer')} onOpenMonth={(monthKey) => push('month', { monthKey })} onAddRecord={startBackfillWithPicker} onSearch={(scope) => push('search', { scope })} refreshTick={refreshTick} />
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <YearScreen theme={theme} db={db} onBack={atRoot ? undefined : () => pop(1)} onHome={() => switchTab('timer')} onOpenMonth={(monthKey) => push('month', { monthKey })} onAddRecord={startBackfillWithPicker} onSearch={(scope) => push('search', { scope })} refreshTick={refreshTick} />
+          </CenteredFormWrap>
         )}
         {route.screen === 'month' && (
-          <MonthScreen theme={theme} db={db} monthKey={route.monthKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenDay={(dateKey) => push('day', { dateKey })} onAddRecord={startBackfillWithPicker} onSearch={(scope) => push('search', { scope })} refreshTick={refreshTick} onNavigateMonth={(mk) => replaceTop({ monthKey: mk })} />
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <MonthScreen theme={theme} db={db} monthKey={route.monthKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenDay={(dateKey) => push('day', { dateKey })} onAddRecord={startBackfillWithPicker} onSearch={(scope) => push('search', { scope })} refreshTick={refreshTick} onNavigateMonth={(mk) => replaceTop({ monthKey: mk })} />
+          </CenteredFormWrap>
         )}
         {route.screen === 'day' && (
           <CenteredFormWrap isDesktop={isDesktop}>
