@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.37';
+const APP_VERSION = '6.38';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -4206,6 +4206,20 @@ function GalleryScreen({ theme, db, refreshTick, onOpenRecord, columns, onColumn
               <Icon.X size={18} weight="bold" />
               <span style={{ fontSize: 15, fontWeight: 700 }}>{selected.size} vybráno</span>
             </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={shareSelected} style={{ width: 40, height: 40, borderRadius: 11, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, flexShrink: 0 }}>
+                <Icon.ShareIcon size={17} />
+              </button>
+              <button onClick={copySelected} style={{ width: 40, height: 40, borderRadius: 11, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, flexShrink: 0 }}>
+                <Icon.Copy size={17} />
+              </button>
+              <button onClick={downloadSelected} style={{ width: 40, height: 40, borderRadius: 11, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, flexShrink: 0 }}>
+                <Icon.Download size={17} />
+              </button>
+              <button onClick={() => setConfirmDeleteSelected(true)} style={{ width: 40, height: 40, borderRadius: 11, background: theme.emSoft, border: `1px solid ${theme.em}44`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.em, flexShrink: 0 }}>
+                <Icon.Trash size={17} />
+              </button>
+            </div>
           </>
         ) : (
           <>
@@ -4244,23 +4258,6 @@ function GalleryScreen({ theme, db, refreshTick, onOpenRecord, columns, onColumn
           </>
         )}
       </div>
-
-      {selectionMode && (
-        <div style={{ display: 'flex', gap: 8, padding: '0 16px 14px' }}>
-          <button onClick={shareSelected} style={{ width: 40, height: 40, borderRadius: 11, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, flexShrink: 0 }}>
-            <Icon.ShareIcon size={17} />
-          </button>
-          <button onClick={copySelected} style={{ width: 40, height: 40, borderRadius: 11, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, flexShrink: 0 }}>
-            <Icon.Copy size={17} />
-          </button>
-          <button onClick={downloadSelected} style={{ width: 40, height: 40, borderRadius: 11, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, flexShrink: 0 }}>
-            <Icon.Download size={17} />
-          </button>
-          <button onClick={() => setConfirmDeleteSelected(true)} style={{ width: 40, height: 40, borderRadius: 11, background: theme.emSoft, border: `1px solid ${theme.em}44`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.em, flexShrink: 0 }}>
-            <Icon.Trash size={17} />
-          </button>
-        </div>
-      )}
 
       {selectionFeedback && (
         <div style={{ margin: '0 16px 12px', fontSize: 12.5, color: selectionFeedback.type === 'error' ? theme.em : theme.cm, background: selectionFeedback.type === 'error' ? theme.emSoft : theme.cmSoft, border: `1px solid ${selectionFeedback.type === 'error' ? theme.em : theme.cm}33`, borderRadius: 10, padding: '9px 13px' }}>

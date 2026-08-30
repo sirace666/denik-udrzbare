@@ -1,11 +1,22 @@
-# Údržba – appka pro sledování oprav
+# Deník údržbáře – appka pro sledování oprav
+
+Appka, která zjednoduší život lidem na opravě. Jednoduchá webová appka (PWA) pro záznam oprav a údržby strojů — časomíra, historie, správa strojů, materiál, fotky. Appka je zdarma, funguje offline a neukládá žádná data mimo tvůj telefon.
 
 ## Co appka umí
 
-- **START/STOP časovač** – spustíš při příchodu na opravu, appku klidně zavřeš, čas běží dál na pozadí (uloženo v telefonu). Po návratu dáš STOP.
-- **Databáze strojů** – po STOP vyhledáš stroj podle názvu, nebo rovnou založíš nový.
-- **Zápis opravy** – typ CM (zelená, bez prostoje) / EM (oranžová, s prostojem), číslo WO, závada, řešení, fotky z fotoaparátu nebo galerie.
-- **Historie** – kalendářní přehled podle dní, filtr CM/EM, statistiky (počty, celkový čas prostojů EM).
+- **START/STOP časomíra** – spustíš při příchodu na opravu, appku klidně zavřeš, čas běží dál na pozadí (uloženo v telefonu). Po návratu dáš STOP a přiřadíš stroj.
+- **Databáze strojů** – stroje jsou organizované do kategorií s vlastní ikonou a barvou (39 ikon, 20 barev pro stroje, 20 odstínů fialové pro kategorie). Rychlé vyhledávání i zakládání nového stroje přímo z pickeru.
+- **Čtyři typy záznamu** – CM práce / CM Oprava (zelená/žlutá) a EM oprava s prostojem / bez prostoje (červená/oranžová). Doba prostoje jde upravit odděleně od doby na místě.
+- **Zápis opravy** – číslo WO, závada, řešení, fotky z fotoaparátu nebo galerie, materiál (počet kusů, skladové číslo, název).
+- **Materiál za běhu opravy** – fotky i materiál jde přidávat, upravovat i mazat přímo během běžící časomíry, ne až po STOP.
+- **Historie** – přehled podle roku i měsíce, statistiky (počty CM/CM Oprava/EM, celkový čas prostojů), detail dne se seznamem záznamů.
+- **Hledání** – v rámci roku nebo konkrétního měsíce, podle textu (závada, řešení, WO, materiál), stroje nebo typu opravy, kombinovatelné.
+- **Galerie** – všechny fotky napříč opravami na jednom místě, řazené podle data, s možností hromadně sdílet/kopírovat/stáhnout/smazat.
+- **Přiblížení fotek** – gesto přiblížení/oddálení (pinch), tažení při přiblížení, dvojklik pro rychlý zoom – funguje všude, kde appka zobrazuje fotku na celou obrazovku.
+- **Vlastní time picker** – appka nepoužívá systémový výběr času (ten na mobilu přetékal mimo obrazovku), ale vlastní ovládání s minutami po 5, ať je zadávání rychlé a konzistentní.
+- **Automatické zaokrouhlení** – čas se zaokrouhluje na 5 minut, nová oprava na dnešní den se předvyplní aktuálním časem.
+- **Záloha a obnova dat** – export do souboru a import zpátky, přímo v appce (Nastavení).
+- **Světlý/tmavý/systémový vzhled** – appka se přizpůsobí nastavení telefonu, nebo jde vybrat ručně.
 - **Funguje offline** – vše se ukládá lokálně v telefonu (IndexedDB), žádný účet, žádný server, žádný internet potřeba pro běžný provoz.
 
 ## Soubory
@@ -21,28 +32,48 @@ icon-512.png     – ikona appky (velká)
 
 ## Nasazení na GitHub Pages
 
-1. Vytvoř nový repozitář na GitHubu (např. `udrzba-app`), může být i public bez obav – appka neposílá žádná data nikam ven.
-2. Nahraj do něj všech 6 souborů výše (do kořene repozitáře, ne do podsložky).
+1. Vytvoř nový repozitář na GitHubu (např. `denik-udrzbare`), může být i public bez obav – appka neposílá žádná data nikam ven.
+2. Nahraj do něj všech 6 souborů výše (do kořene repozitáře, ne do podsložky) a taky `.nojekyll` (prázdný soubor, aby GitHub Pages neignoroval soubory se začátečním podtržítkem/tečkou).
 3. V nastavení repozitáře: **Settings → Pages → Source: Deploy from branch → Branch: main → / (root)**.
-4. Za chvíli appka poběží na `https://tvoje-jmeno.github.io/udrzba-app/`.
+4. Za chvíli appka poběží na `https://tvoje-jmeno.github.io/denik-udrzbare/`.
 
-## Instalace na Android telefon
+## Instalace na plochu – Android
 
-1. Otevři tu adresu v Chrome na telefonu.
-2. Chrome nabídne **„Přidat na plochu"** (nebo menu ⋮ → „Přidat na plochu" / „Nainstalovat aplikaci").
-3. Appka se objeví jako ikona na ploše a chová se jako nativní appka (bez adresního řádku prohlížeče).
+1. Otevři appku v prohlížeči **Chrome** na adrese, kde appka běží.
+2. Klepni na nabídku (tři tečky vpravo nahoře).
+3. Vyber **„Přidat na plochu"** nebo **„Nainstalovat aplikaci"**.
+4. Potvrď název a klepni na **„Přidat"** / **„Instalovat"**.
+5. Appka se objeví na ploše jako běžná aplikace a půjde spouštět i offline.
+
+## Instalace na plochu – iOS (iPhone/iPad)
+
+1. Otevři appku v prohlížeči **Safari** (musí to být Safari, ne Chrome – jinak nabídka pro přidání na plochu chybí).
+2. Klepni na tlačítko **Sdílet** (ikona čtverečku se šipkou dole uprostřed lišty).
+3. Sjeď v nabídce dolů a vyber **„Přidat na plochu"**.
+4. Potvrď název a klepni na **„Přidat"** vpravo nahoře.
+5. Appka se objeví na ploše jako běžná aplikace a půjde spouštět i offline.
+
+Appka se pak chová jako běžná nativní aplikace – vlastní ikona, běží na celou obrazovku bez adresního řádku prohlížeče, funguje i bez připojení k internetu.
 
 ## Důležité – kam mizí data
 
 Data (stroje, záznamy oprav, fotky) se ukládají **jen v tomto konkrétním telefonu a jen v tomto konkrétním prohlížeči**. To znamená:
 
-- Když appku odinstaluješ nebo vymažeš data prohlížeče Chrome, data zmizí. Zálohu zatím appka nedělá – to je první věc, kterou má smysl doplnit, až budeš appku chvíli používat a uvidíš, jestli ti to takhle stačí.
-- Data se nezobrazí na jiném telefonu ani na PC – jsou jen tady.
-- Pokud budeš chtít v budoucnu vidět historii i odjinud (PC, jiný telefon), řešením by bylo napojit appku na Firebase (podobně jako u SPT) – ale to už je druhý krok, ne první.
+- Když appku odinstaluješ nebo vymažeš data prohlížeče, data zmizí. Appka má v Nastavení **export/import zálohy** – vyplatí se ji občas udělat.
+- Data se nezobrazí na jiném telefonu ani na PC – jsou jen tady, dokud je ručně nepřeneseš přes export/import.
+- Pokud budeš chtít v budoucnu vidět historii i odjinud (PC, jiný telefon) automaticky, řešením by bylo napojit appku na cloudové úložiště (např. Firebase) – ale to už je větší krok, ne první.
+
+## Aktualizace appky
+
+Appka má vlastní mechanismus, který při každém spuštění zkontroluje, jestli je na GitHub Pages novější verze, a pokud ano, sama se obnoví. Po nahrání nové verze na GitHub se tedy telefon aktualizuje automaticky při příštím otevření appky – není potřeba nic odinstalovávat.
+
+## Podpora vývoje
+
+V appce (Nastavení → „Podpoř vývoj appky") je odkaz na dobrovolný příspěvek – appka je a zůstane zdarma, příspěvek je čistě dobrovolný.
 
 ## Co by šlo příště doplnit
 
 - Export měsíce/směny do CSV nebo PDF pro reporting
 - Historie oprav per stroj (kolikrát byl v EM, celkový čas)
-- Záloha/obnova dat (export/import JSON)
+- Cloudová synchronizace mezi zařízeními
 - Zamykání obrazovky proti náhodnému stisku při práci v kapse
