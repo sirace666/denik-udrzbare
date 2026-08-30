@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.38';
+const APP_VERSION = '6.40';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -381,6 +381,25 @@ function useNow() {
   return now;
 }
 
+// Sleduje aktuální šířku okna a hlásí, jestli je nad desktopovým breakpointem
+// (860px) — appka nad ním přepíná na plnohodnotný desktop layout (postranní
+// menu, širší mřížky), pod ním zůstává čistě mobilní. Reaguje na resize za
+// běhu (změna orientace tabletu, zmenšení okna na PC), ne jen jednou při startu.
+const DESKTOP_BREAKPOINT = 860;
+function useViewportWidth() {
+  const [isDesktop, setIsDesktop] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= DESKTOP_BREAKPOINT : false
+  );
+  useEffect(() => {
+    function handleResize() {
+      setIsDesktop(window.innerWidth >= DESKTOP_BREAKPOINT);
+    }
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  return isDesktop;
+}
+
 function useTheme() {
   const [mode, setMode] = useState('dark');
   const [resolved, setResolved] = useState('dark');
@@ -424,7 +443,7 @@ function Card({ theme, children, style }) {
   );
 }
 
-function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onOpenToday, onAddPhoto, onRemovePhoto, onAddMaterial, onUpdateMaterial, onRemoveMaterial }) {
+function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings, onOpenToday, onOpenRecord, onAddPhoto, onRemovePhoto, onAddMaterial, onUpdateMaterial, onRemoveMaterial, isDesktop, refreshTick }) {
   const elapsed = useElapsed(activeSession?.startTime, !!activeSession);
   const now = useNow();
   const [pressed, setPressed] = useState(false);
@@ -440,6 +459,20 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
   const [editingMaterialIdx, setEditingMaterialIdx] = useState(null);
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [lightboxCopyFeedback, setLightboxCopyFeedback] = useState(false);
+  const [todayRecords, setTodayRecords] = useState([]);
+
+  // Postranní panel s dnešními opravami se ukazuje jen na desktopu (na
+  // mobilu appka pro to má odkaz "Dnešní opravy" na vlastní obrazovce) —
+  // tady se proto data načítají jen tehdy, kdy je vůbec kam je zobrazit.
+  useEffect(() => {
+    if (!isDesktop || !db) return;
+    const todayKey = fmtDateKey(Date.now());
+    db.getAll('records').then(all => {
+      const todays = all.filter(r => r.date === todayKey);
+      todays.sort((a, b) => b.startTime - a.startTime);
+      setTodayRecords(todays);
+    });
+  }, [isDesktop, db, refreshTick, activeSession]);
 
   function handleSessionFiles(e) {
     const files = Array.from(e.target.files || []);
@@ -466,17 +499,22 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
   }
 
   return (
-    <div style={{ ...S.screen, background: theme.bg, overflowY: 'auto' }}>
+    <div style={{ ...S.screen, background: theme.bg, overflowY: 'auto', flexDirection: isDesktop ? 'row' : 'column', alignItems: 'stretch' }}>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ position: 'relative' }}>
         <div style={S.homeHeader}>
           <div style={S.homeHeaderTop}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 32, height: 32, borderRadius: 9, background: theme.primarySoft, border: `1px solid ${theme.primary}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.primary, flexShrink: 0 }}>
-                <Icon.Wrench size={16} weight="fill" />
+            {isDesktop ? (
+              <div />
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: theme.primarySoft, border: `1px solid ${theme.primary}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.primary, flexShrink: 0 }}>
+                  <Icon.Wrench size={16} weight="fill" />
+                </div>
+                <span style={{ fontSize: 15, fontWeight: 600, color: theme.text, whiteSpace: 'nowrap' }}>Deník údržbáře</span>
               </div>
-              <span style={{ fontSize: 15, fontWeight: 600, color: theme.text, whiteSpace: 'nowrap' }}>Deník údržbáře</span>
-            </div>
-            <IconButton theme={theme} onClick={onOpenSettings}><Icon.Settings size={19} /></IconButton>
+            )}
+            {!isDesktop && <IconButton theme={theme} onClick={onOpenSettings}><Icon.Settings size={19} /></IconButton>}
           </div>
         </div>
         {activeSession && (
@@ -580,6 +618,50 @@ function HomeScreen({ theme, activeSession, onStart, onStop, onOpenSettings, onO
           <Icon.ChevronRight size={17} />
         </button>
       </div>
+      </div>
+
+      {isDesktop && (
+        <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${theme.border}`, padding: '24px 22px', overflowY: 'auto' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: theme.textFaint, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>
+            Dnešní opravy
+          </div>
+          {todayRecords.length === 0 ? (
+            <div style={{ fontSize: 13, color: theme.textFaint, lineHeight: 1.5 }}>
+              Zatím žádné záznamy pro dnešní den.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {todayRecords.map(r => {
+                const color = r.type === 'EM' ? (r.emSubtype === 'bezProstoje' ? theme.emAlt : theme.em) : (r.cmSubtype === 'oprava' ? theme.cmAlt : theme.cm);
+                const soft = r.type === 'EM' ? (r.emSubtype === 'bezProstoje' ? theme.emAltSoft : theme.emSoft) : (r.cmSubtype === 'oprava' ? theme.cmAltSoft : theme.cmSoft);
+                const displayDuration = r.type === 'EM' ? (r.downtimeMs ?? (r.endTime - r.startTime)) : (r.endTime - r.startTime);
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => onOpenRecord(r)}
+                    style={{
+                      display: 'flex', width: '100%', textAlign: 'left',
+                      background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 14,
+                      overflow: 'hidden', backdropFilter: theme.blur,
+                    }}
+                  >
+                    <div style={{ width: 4, background: color, flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0, padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+                        <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{r.machineName}</span>
+                        <span style={{ fontSize: 9.5, fontWeight: 800, padding: '2px 7px', borderRadius: 6, letterSpacing: 0.3, color, background: soft, flexShrink: 0 }}>{r.type}</span>
+                      </div>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5, color: theme.textDim }}>
+                        {fmtTime(r.startTime)}–{fmtTime(r.endTime)} · {fmtDurationMin(displayDuration)}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {showPhotoModal && (
         <div onClick={() => setShowPhotoModal(false)} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', zIndex: 60, display: 'flex', alignItems: 'flex-end' }}>
@@ -2773,6 +2855,22 @@ function PhotoAddButtons({ theme, onFiles }) {
   );
 }
 
+// Omezuje šířku formulářových a detailových obrazovek na desktopu, ať se
+// dlouhá textová pole a karty nenatahují přes celou širokou obrazovku —
+// appka na těchhle obrazovkách nemá vlastní vícesloupcový layout (na rozdíl
+// od mřížek jako Stroje/Galerie), takže plná šířka jen zhoršuje čitelnost.
+// Na mobilu (isDesktop=false) se chová jako transparentní průchozí wrapper.
+function CenteredFormWrap({ isDesktop, children }) {
+  if (!isDesktop) return children;
+  return (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', justifyContent: 'center', overflow: 'hidden' }}>
+      <div style={{ width: '100%', maxWidth: 640, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [db, setDb] = useState(null);
   const [activeTab, setActiveTab] = useState('timer'); // 'timer' | 'history' | 'machines'
@@ -2787,6 +2885,7 @@ function App() {
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   const { mode, setMode, theme, resolvedName: resolvedThemeName } = useTheme();
+  const isDesktop = useViewportWidth();
 
   const route = stack[stack.length - 1];
   const atRoot = stack.length === 1;
@@ -2799,9 +2898,13 @@ function App() {
       const settings = await database.get('settings', 'theme');
       if (settings?.mode) setMode(settings.mode);
       const gallerySettings = await database.get('settings', 'gallery').catch(() => null);
-      if (gallerySettings?.columns) setGalleryColumns(gallerySettings.columns);
       const machineSettings = await database.get('settings', 'machines').catch(() => null);
-      if (machineSettings?.columns) setMachineColumns(machineSettings.columns);
+      // Na desktopu appka rovnou zobrazí víc sloupců, ať se rozumně využije
+      // šířka obrazovky bez nutnosti ručně přepínat — ale jen pokud uživatel
+      // ještě nikdy počet sloupců sám nenastavil (jeho volba má přednost).
+      const wideDefault = window.innerWidth >= DESKTOP_BREAKPOINT ? 5 : 3;
+      setGalleryColumns(gallerySettings?.columns || wideDefault);
+      setMachineColumns(machineSettings?.columns || wideDefault);
     });
   }, []);
 
@@ -3038,21 +3141,28 @@ function App() {
   }
 
   return (
-    <div style={{ height: '100vh', background: theme.bg, transition: 'background 0.2s ease', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div style={{ height: '100vh', background: theme.bg, transition: 'background 0.2s ease', display: 'flex', flexDirection: isDesktop ? 'row' : 'column' }}>
+      {isDesktop && atRoot && (
+        <SideNav theme={theme} activeTab={activeTab} onSwitch={switchTab} onOpenSettings={() => push('settings')} />
+      )}
+      <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {route.screen === 'home' && (
           <HomeScreen
             theme={theme}
+            db={db}
             activeSession={activeSession}
             onStart={startTimer}
             onStop={stopTimer}
             onOpenSettings={() => push('settings')}
             onOpenToday={goToTodayInHistory}
+            onOpenRecord={(r) => push('recordDetail', { record: r })}
             onAddPhoto={addSessionPhoto}
             onRemovePhoto={removeSessionPhoto}
             onAddMaterial={addSessionMaterial}
             onUpdateMaterial={updateSessionMaterial}
             onRemoveMaterial={removeSessionMaterial}
+            isDesktop={isDesktop}
+            refreshTick={refreshTick}
           />
         )}
         {route.screen === 'machines' && (
@@ -3067,20 +3177,24 @@ function App() {
           />
         )}
         {route.screen === 'machineForm' && (
-          <MachineFormScreen
-            theme={theme} db={db} machine={route.machine}
-            onBack={() => pop(1)}
-            onSaved={() => { setRefreshTick(t => t + 1); pop(1); }}
-            onDeleted={() => { setRefreshTick(t => t + 1); pop(1); }}
-          />
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <MachineFormScreen
+              theme={theme} db={db} machine={route.machine}
+              onBack={() => pop(1)}
+              onSaved={() => { setRefreshTick(t => t + 1); pop(1); }}
+              onDeleted={() => { setRefreshTick(t => t + 1); pop(1); }}
+            />
+          </CenteredFormWrap>
         )}
         {route.screen === 'categoryForm' && (
-          <CategoryFormScreen
-            theme={theme} db={db} category={route.category}
-            onBack={() => pop(1)}
-            onSaved={() => { setRefreshTick(t => t + 1); pop(1); }}
-            onDeleted={() => { setRefreshTick(t => t + 1); pop(1); }}
-          />
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <CategoryFormScreen
+              theme={theme} db={db} category={route.category}
+              onBack={() => pop(1)}
+              onSaved={() => { setRefreshTick(t => t + 1); pop(1); }}
+              onDeleted={() => { setRefreshTick(t => t + 1); pop(1); }}
+            />
+          </CenteredFormWrap>
         )}
         {route.screen === 'gallery' && (
           <GalleryScreen
@@ -3089,33 +3203,43 @@ function App() {
             columns={galleryColumns} onColumnsChange={handleGalleryColumnsChange}
           />
         )}
-        {route.screen === 'settings' && <SettingsScreen theme={theme} mode={mode} setMode={handleSetMode} onBack={() => pop(1)} db={db} onDataRestored={handleDataRestored} />}
+        {route.screen === 'settings' && (
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <SettingsScreen theme={theme} mode={mode} setMode={handleSetMode} onBack={() => pop(1)} db={db} onDataRestored={handleDataRestored} />
+          </CenteredFormWrap>
+        )}
         {route.screen === 'datePicker' && (
-          <DatePickerScreen
-            theme={theme}
-            initialDate={route.defaultDateKey}
-            onConfirm={(dateKey) => push('pickMachine', { backfillDate: dateKey })}
-            onBack={() => onBackfillCancel(true)}
-            resolvedThemeName={resolvedThemeName}
-          />
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <DatePickerScreen
+              theme={theme}
+              initialDate={route.defaultDateKey}
+              onConfirm={(dateKey) => push('pickMachine', { backfillDate: dateKey })}
+              onBack={() => onBackfillCancel(true)}
+              resolvedThemeName={resolvedThemeName}
+            />
+          </CenteredFormWrap>
         )}
         {route.screen === 'pickMachine' && (
-          <MachinePicker
-            theme={theme} db={db}
-            onPick={(machine) => onMachinePicked(machine, route.backfillDate)}
-            onCancel={() => (route.backfillDate ? onBackfillCancel(true) : onRecordFormCancel())}
-          />
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <MachinePicker
+              theme={theme} db={db}
+              onPick={(machine) => onMachinePicked(machine, route.backfillDate)}
+              onCancel={() => (route.backfillDate ? onBackfillCancel(true) : onRecordFormCancel())}
+            />
+          </CenteredFormWrap>
         )}
         {route.screen === 'recordForm' && (
-          <RecordForm
-            theme={theme} db={db}
-            session={route.initialDate ? null : pendingSession}
-            initialDate={route.initialDate}
-            machine={route.machine}
-            onSave={route.initialDate ? () => onRecordSavedToDay(route.initialDate) : onRecordSaved}
-            onCancel={route.initialDate ? () => onBackfillCancel(true) : onRecordFormCancel}
-            resolvedThemeName={resolvedThemeName}
-          />
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <RecordForm
+              theme={theme} db={db}
+              session={route.initialDate ? null : pendingSession}
+              initialDate={route.initialDate}
+              machine={route.machine}
+              onSave={route.initialDate ? () => onRecordSavedToDay(route.initialDate) : onRecordSaved}
+              onCancel={route.initialDate ? () => onBackfillCancel(true) : onRecordFormCancel}
+              resolvedThemeName={resolvedThemeName}
+            />
+          </CenteredFormWrap>
         )}
         {route.screen === 'year' && (
           <YearScreen theme={theme} db={db} onBack={atRoot ? undefined : () => pop(1)} onHome={() => switchTab('timer')} onOpenMonth={(monthKey) => push('month', { monthKey })} onAddRecord={startBackfillWithPicker} onSearch={(scope) => push('search', { scope })} refreshTick={refreshTick} />
@@ -3124,18 +3248,79 @@ function App() {
           <MonthScreen theme={theme} db={db} monthKey={route.monthKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenDay={(dateKey) => push('day', { dateKey })} onAddRecord={startBackfillWithPicker} onSearch={(scope) => push('search', { scope })} refreshTick={refreshTick} onNavigateMonth={(mk) => replaceTop({ monthKey: mk })} />
         )}
         {route.screen === 'day' && (
-          <DayScreen theme={theme} db={db} dateKey={route.dateKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenRecord={(r) => push('recordDetail', { record: r })} onAddRecord={startBackfill} refreshTick={refreshTick} />
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <DayScreen theme={theme} db={db} dateKey={route.dateKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenRecord={(r) => push('recordDetail', { record: r })} onAddRecord={startBackfill} refreshTick={refreshTick} />
+          </CenteredFormWrap>
         )}
         {route.screen === 'search' && (
-          <SearchScreen theme={theme} db={db} scope={route.scope} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenRecord={(r) => push('recordDetail', { record: r })} />
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <SearchScreen theme={theme} db={db} scope={route.scope} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenRecord={(r) => push('recordDetail', { record: r })} />
+          </CenteredFormWrap>
         )}
         {route.screen === 'recordDetail' && (
-          <RecordDetail theme={theme} db={db} record={route.record} onBack={() => pop(1)} onHome={() => switchTab('timer')} onDelete={deleteRecord} onUpdated={onRecordUpdated} resolvedThemeName={resolvedThemeName} />
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <RecordDetail theme={theme} db={db} record={route.record} onBack={() => pop(1)} onHome={() => switchTab('timer')} onDelete={deleteRecord} onUpdated={onRecordUpdated} resolvedThemeName={resolvedThemeName} />
+          </CenteredFormWrap>
         )}
       </div>
-      {atRoot && (
+      {atRoot && !isDesktop && (
         <TabBar theme={theme} activeTab={activeTab} onSwitch={switchTab} />
       )}
+    </div>
+  );
+}
+
+// Postranní menu pro desktop layout — nahrazuje TabBar na širokých
+// obrazovkách (nad DESKTOP_BREAKPOINT). Stejné čtyři záložky, svisle vlevo,
+// s logem appky a nastavením nahoře, ať se navigace nemusí hledat na dvou
+// různých místech podle šířky okna.
+function SideNav({ theme, activeTab, onSwitch, onOpenSettings }) {
+  const tabs = [
+    { key: 'timer', label: 'Timer', icon: Icon.Clock },
+    { key: 'history', label: 'Historie', icon: Icon.Calendar },
+    { key: 'gallery', label: 'Galerie', icon: Icon.Image },
+    { key: 'machines', label: 'Stroje', icon: Icon.Wrench },
+  ];
+  return (
+    <div style={{
+      width: 232, flexShrink: 0, display: 'flex', flexDirection: 'column',
+      borderRight: `1px solid ${theme.border}`, background: theme.surfaceSolid,
+      padding: '20px 14px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 8px', marginBottom: 28 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 9, background: theme.primarySoft, border: `1px solid ${theme.primary}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.primary, flexShrink: 0 }}>
+          <Icon.Wrench size={16} weight="fill" />
+        </div>
+        <span style={{ fontSize: 15, fontWeight: 700, color: theme.text, whiteSpace: 'nowrap' }}>Deník údržbáře</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {tabs.map(tab => {
+          const active = activeTab === tab.key;
+          const IconComp = tab.icon;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => onSwitch(tab.key)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 11, padding: '10px 12px', borderRadius: 11,
+                background: active ? theme.primarySoft : 'none', border: 'none',
+                color: active ? theme.primary : theme.textDim, textAlign: 'left',
+              }}
+            >
+              <IconComp size={19} weight={active ? 'fill' : 'regular'} />
+              <span style={{ fontSize: 14, fontWeight: active ? 700 : 500 }}>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ flex: 1 }} />
+      <button
+        onClick={onOpenSettings}
+        style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 12px', borderRadius: 11, background: 'none', border: 'none', color: theme.textDim, textAlign: 'left' }}
+      >
+        <Icon.Settings size={19} />
+        <span style={{ fontSize: 14, fontWeight: 500 }}>Nastavení</span>
+      </button>
     </div>
   );
 }

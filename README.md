@@ -17,6 +17,7 @@ Appka, která zjednoduší život lidem na opravě. Jednoduchá webová appka (P
 - **Automatické zaokrouhlení** – čas se zaokrouhluje na 5 minut, nová oprava na dnešní den se předvyplní aktuálním časem.
 - **Záloha a obnova dat** – export do souboru a import zpátky, přímo v appce (Nastavení).
 - **Světlý/tmavý/systémový vzhled** – appka se přizpůsobí nastavení telefonu, nebo jde vybrat ručně.
+- **Přizpůsobení širokým obrazovkám** – na monitoru appka automaticky přepne na desktopové rozvržení: postranní menu vlevo místo spodní lišty, širší mřížky u Strojů a Galerie (víc sloupců), postranní panel s dnešními opravami na Timeru, a přiměřeně omezená šířka formulářů a detailů, ať se nenatahují přes celou obrazovku. Na telefonu zůstává appka beze změny.
 - **Funguje offline** – vše se ukládá lokálně v telefonu (IndexedDB), žádný účet, žádný server, žádný internet potřeba pro běžný provoz.
 
 ## Soubory
