@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.43';
+const APP_VERSION = '6.49';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -231,6 +231,7 @@ const Icon = {
   Copy: phosphorIcon('copy'),
   ShareIcon: phosphorIcon('share-network'),
   House: phosphorIcon('house'),
+  Pin: phosphorIcon('push-pin'),
   // Sada ikon pro kategorie strojů — dostatečně různorodá, ať jde vizuálně
   // odlišit různé typy vybavení/oblastí (elektro, hydraulika, doprava, ...).
   CatGear: phosphorIcon('gear-six'),
@@ -473,20 +474,6 @@ function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings,
   const [editingMaterialIdx, setEditingMaterialIdx] = useState(null);
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [lightboxCopyFeedback, setLightboxCopyFeedback] = useState(false);
-  const [todayRecords, setTodayRecords] = useState([]);
-
-  // Postranní panel s dnešními opravami se ukazuje jen na desktopu (na
-  // mobilu appka pro to má odkaz "Dnešní opravy" na vlastní obrazovce) —
-  // tady se proto data načítají jen tehdy, kdy je vůbec kam je zobrazit.
-  useEffect(() => {
-    if (!isDesktop || !db) return;
-    const todayKey = fmtDateKey(Date.now());
-    db.getAll('records').then(all => {
-      const todays = all.filter(r => r.date === todayKey);
-      todays.sort((a, b) => b.startTime - a.startTime);
-      setTodayRecords(todays);
-    });
-  }, [isDesktop, db, refreshTick, activeSession]);
 
   function handleSessionFiles(e) {
     const files = Array.from(e.target.files || []);
@@ -513,7 +500,7 @@ function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings,
   }
 
   return (
-    <div style={{ ...S.screen, background: theme.bg, overflowY: 'auto', flexDirection: isDesktop ? 'row' : 'column', alignItems: 'stretch' }}>
+    <div style={{ ...S.screen, background: theme.bg, overflowY: 'auto' }}>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ position: 'relative' }}>
         <div style={S.homeHeader}>
@@ -637,49 +624,6 @@ function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings,
         </button>
       </div>
       </div>
-
-      {isDesktop && (
-        <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${theme.border}`, padding: '24px 22px', overflowY: 'auto' }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: theme.textFaint, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>
-            Dnešní opravy
-          </div>
-          {todayRecords.length === 0 ? (
-            <div style={{ fontSize: 13, color: theme.textFaint, lineHeight: 1.5 }}>
-              Zatím žádné záznamy pro dnešní den.
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {todayRecords.map(r => {
-                const color = r.type === 'EM' ? (r.emSubtype === 'bezProstoje' ? theme.emAlt : theme.em) : (r.cmSubtype === 'oprava' ? theme.cmAlt : theme.cm);
-                const soft = r.type === 'EM' ? (r.emSubtype === 'bezProstoje' ? theme.emAltSoft : theme.emSoft) : (r.cmSubtype === 'oprava' ? theme.cmAltSoft : theme.cmSoft);
-                const displayDuration = r.type === 'EM' ? (r.downtimeMs ?? (r.endTime - r.startTime)) : (r.endTime - r.startTime);
-                return (
-                  <button
-                    key={r.id}
-                    onClick={() => onOpenRecord(r)}
-                    style={{
-                      display: 'flex', width: '100%', textAlign: 'left',
-                      background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 14,
-                      overflow: 'hidden', backdropFilter: theme.blur,
-                    }}
-                  >
-                    <div style={{ width: 4, background: color, flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0, padding: '10px 12px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
-                        <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{r.machineName}</span>
-                        <span style={{ fontSize: 9.5, fontWeight: 800, padding: '2px 7px', borderRadius: 6, letterSpacing: 0.3, color, background: soft, flexShrink: 0 }}>{r.type}</span>
-                      </div>
-                      <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5, color: theme.textDim }}>
-                        {fmtTime(r.startTime)}–{fmtTime(r.endTime)} · {fmtDurationMin(displayDuration)}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
 
       {showPhotoModal && (
         <div onClick={() => setShowPhotoModal(false)} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', zIndex: 60, display: 'flex', alignItems: 'flex-end' }}>
@@ -1077,16 +1021,111 @@ function DurationEditor({ theme, valueMs, onChange }) {
   );
 }
 
-function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel, resolvedThemeName }) {
-  const [type, setType] = useState('CM');
-  const [cmSubtype, setCmSubtype] = useState('normal');
-  const [emSubtype, setEmSubtype] = useState('sProstojem');
-  const [wo, setWo] = useState('');
-  const [issue, setIssue] = useState('');
-  const [solution, setSolution] = useState('');
+// Needitovatelný náhled rozpracované opravy (activeSession) — otevírá se
+// klepnutím na kartu "Právě probíhá" v Dnešní opravy, stejně jako appka
+// nejdřív ukáže needitovatelný detail u hotového záznamu, než se přejde do
+// úprav. Na rozdíl od RecordDetail appka tady nemá uložený záznam s id v
+// databázi (jen rozpracovaná data v activeSession), takže není co mazat a
+// není třeba stahovat/sdílet — jen zobrazit, co je zatím zadané, a nabídnout
+// tlačítko pro editaci.
+function LivePreview({ theme, session, liveElapsed, onBack, onHome, onEdit }) {
+  const color = session.type === 'EM' ? theme.em : (session.cmSubtype === 'oprava' ? theme.cmAlt : theme.cm);
+  const soft = session.type === 'EM' ? theme.emSoft : (session.cmSubtype === 'oprava' ? theme.cmAltSoft : theme.cmSoft);
+  const typeLabel = session.type === 'EM'
+    ? (session.emSubtype === 'bezProstoje' ? 'EM · Bez prostoje' : 'EM · S prostojem')
+    : `CM · ${CM_SUBTYPES[session.cmSubtype || 'normal'].label}`;
+
+  return (
+    <div style={{ ...S.screen, background: theme.bg }}>
+      <ModalHeader theme={theme} title="Právě probíhá" onBack={onBack} onHome={onHome} />
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+        <Card theme={theme} style={{ padding: 18, marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: session.machineName ? theme.text : theme.textFaint }}>
+              {session.machineName || 'Bez stroje'}
+            </div>
+            {session.type && (
+              <span style={{ display: 'inline-block', padding: '5px 12px', borderRadius: 9, fontSize: 12, fontWeight: 700, color, background: soft, whiteSpace: 'nowrap' }}>
+                {typeLabel}
+              </span>
+            )}
+          </div>
+          <div style={{ background: theme.emSoft, border: `1px solid ${theme.em}33`, borderRadius: 12, padding: '11px 13px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: theme.em, flexShrink: 0 }} />
+            <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 16, fontWeight: 700, color: theme.em }}>od {fmtTime(session.startTime)} · {fmtDuration(liveElapsed)}</span>
+          </div>
+        </Card>
+
+        {session.wo && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 26 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: theme.textFaint }}>WO</span>
+            <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12.5, fontWeight: 700, color: theme.textDim, background: theme.surfaceElevated, padding: '3px 9px', borderRadius: 7 }}>
+              {session.wo}
+            </span>
+          </div>
+        )}
+        {session.issue && (
+          <div style={{ marginBottom: 26 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: theme.textFaint, marginBottom: 8 }}>Závada</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: theme.text, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{session.issue}</div>
+          </div>
+        )}
+        {session.solution && (
+          <div style={{ marginBottom: 26 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: theme.textFaint, marginBottom: 8 }}>Řešení</div>
+            <div style={{ background: theme.bgSubtle, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '13px 16px' }}>
+              <div style={{ fontSize: 14.5, fontWeight: 500, color: theme.text, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{session.solution}</div>
+            </div>
+          </div>
+        )}
+        {session.photos?.length > 0 && (
+          <>
+            <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Fotky</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 26 }}>
+              {session.photos.map((p, i) => (
+                <img key={i} src={p} style={{ width: 100, height: 100, borderRadius: 14, objectFit: 'cover', border: `1px solid ${theme.border}` }} />
+              ))}
+            </div>
+          </>
+        )}
+        {session.materials?.length > 0 && (
+          <div style={{ marginBottom: 26 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: theme.textFaint, marginBottom: 8 }}>Materiál</div>
+            <MaterialList theme={theme} materials={session.materials} editingIdx={null} onEdit={() => {}} onRemove={() => {}} />
+          </div>
+        )}
+        {!session.wo && !session.issue && !session.solution && !session.photos?.length && !session.materials?.length && (
+          <div style={{ fontSize: 13, color: theme.textFaint, textAlign: 'center', padding: '20px 0' }}>
+            Zatím nic zadané — klepni na Upravit a doplň, co víš.
+          </div>
+        )}
+      </div>
+      <div style={{ padding: '14px 20px', borderTop: `1px solid ${theme.border}`, background: theme.bg }}>
+        <button onClick={onEdit} style={{ width: '100%', background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`, borderRadius: 14, padding: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: theme.text, fontSize: 15, fontWeight: 700 }}>
+          <Icon.Edit size={16} />
+          <span>Upravit záznam</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RecordForm({ theme, db, session, initialDate, machine: machineProp, onSave, onCancel, resolvedThemeName, liveEdit, onLiveSave, liveElapsed }) {
+  // V liveEdit módu appka spravuje vybraný stroj sama (jde ho vybrat i
+  // změnit přímo z formuláře) — mimo liveEdit zůstává stroj pevně daný
+  // propem, appka ho tam nemění.
+  const [liveMachine, setLiveMachine] = useState(() => (session?.machineId ? { id: session.machineId, name: session.machineName } : null));
+  const machine = liveEdit ? liveMachine : machineProp;
+  const [type, setType] = useState(session?.type || 'CM');
+  const [cmSubtype, setCmSubtype] = useState(session?.cmSubtype || 'normal');
+  const [emSubtype, setEmSubtype] = useState(session?.emSubtype || 'sProstojem');
+  const [wo, setWo] = useState(session?.wo || '');
+  const [issue, setIssue] = useState(session?.issue || '');
+  const [solution, setSolution] = useState(session?.solution || '');
   const [photos, setPhotos] = useState(() => session?.photos || []);
   const [materials, setMaterials] = useState(() => session?.materials || []);
   const [editingMaterialIdx, setEditingMaterialIdx] = useState(null);
+  const [showMachinePicker, setShowMachinePicker] = useState(false); // jen pro liveEdit — výběr/změna stroje bez opuštění formuláře
   const fileInputRef = useRef(null);
   const galleryInputRef = useRef(null);
 
@@ -1187,6 +1226,20 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
   }
 
   async function save() {
+    if (liveEdit) {
+      // V živém módu appka jen průběžně ukládá rozpracovaná data do
+      // activeSession — žádný záznam v `records` ještě nevzniká, appka
+      // nemá ani čas konce (ten se dopočítá až po STOP), takže se tu
+      // neřeší downtime ani finální id/date.
+      onLiveSave({
+        machineId: machine?.id, machineName: machine?.name, type,
+        cmSubtype: type === 'CM' ? cmSubtype : null,
+        emSubtype: type === 'EM' ? emSubtype : null,
+        wo: wo.trim(), issue: issue.trim(), solution: solution.trim(), photos, materials,
+      });
+      onSave();
+      return;
+    }
     const record = {
       id: uid(), machineId: machine.id, machineName: machine.name, type,
       cmSubtype: type === 'CM' ? cmSubtype : null,
@@ -1205,16 +1258,32 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
 
   return (
     <div style={{ ...S.screen, background: theme.bg }}>
-      <ModalHeader theme={theme} title={isBackfill ? 'Přidat opravu' : 'Zápis opravy'} onBack={onCancel} />
+      <ModalHeader theme={theme} title={liveEdit ? 'Právě probíhá' : (isBackfill ? 'Přidat opravu' : 'Zápis opravy')} onBack={onCancel} />
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
         <Card theme={theme} style={{ padding: 18, marginBottom: 22 }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: theme.text, marginBottom: 12 }}>{machine.name}</div>
-          <DateEditor theme={theme} label="Datum" value={startTime} onChange={updateStartDate} isDark={resolvedThemeName === 'dark'} />
-          <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-            <TimeEditor theme={theme} label="Od" value={startTime} onChange={updateStartTime} isDark={resolvedThemeName === 'dark'} />
-            <TimeEditor theme={theme} label="Do" value={endTime} onChange={updateEndTime} isDark={resolvedThemeName === 'dark'} />
-          </div>
-          <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 10 }}>doba na místě {fmtDurationShort(actualDuration)}</div>
+          {liveEdit ? (
+            <button onClick={() => setShowMachinePicker(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', padding: 0, marginBottom: 4 }}>
+              <span style={{ fontSize: 18, fontWeight: 700, color: machine ? theme.text : theme.textFaint }}>{machine ? machine.name : 'Vybrat stroj (volitelné)'}</span>
+              <Icon.ChevronRight size={16} style={{ color: theme.textFaint, flexShrink: 0 }} />
+            </button>
+          ) : (
+            <div style={{ fontSize: 18, fontWeight: 700, color: theme.text, marginBottom: 12 }}>{machine.name}</div>
+          )}
+          {liveEdit ? (
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 22, fontWeight: 700, color: theme.em }}>{liveElapsed}</span>
+              <span style={{ fontSize: 12, color: theme.textFaint }}>čas doběhne až po STOP</span>
+            </div>
+          ) : (
+            <>
+              <DateEditor theme={theme} label="Datum" value={startTime} onChange={updateStartDate} isDark={resolvedThemeName === 'dark'} />
+              <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+                <TimeEditor theme={theme} label="Od" value={startTime} onChange={updateStartTime} isDark={resolvedThemeName === 'dark'} />
+                <TimeEditor theme={theme} label="Do" value={endTime} onChange={updateEndTime} isDark={resolvedThemeName === 'dark'} />
+              </div>
+              <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 10 }}>doba na místě {fmtDurationShort(actualDuration)}</div>
+            </>
+          )}
         </Card>
 
         <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Typ</div>
@@ -1265,7 +1334,7 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
           </div>
         )}
 
-        {type === 'EM' && emSubtype === 'sProstojem' && (
+        {!liveEdit && type === 'EM' && emSubtype === 'sProstojem' && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div style={{ ...S.fieldLabel, color: theme.textFaint, marginBottom: 0 }}>Prostoj (od–do)</div>
@@ -1345,11 +1414,18 @@ function RecordForm({ theme, db, session, initialDate, machine, onSave, onCancel
       </div>
 
       <div style={{ padding: '14px 20px', borderTop: `1px solid ${theme.border}`, background: theme.bg }}>
-        <button onClick={save} style={{ width: '100%', background: `linear-gradient(155deg, ${theme.primary} 0%, #4338CA 100%)`, border: 'none', borderRadius: 14, padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#fff', fontSize: 16, fontWeight: 700, boxShadow: `0 6px 20px ${theme.primary}40` }}>
+        <button onClick={save} disabled={!liveEdit && !machine} style={{ width: '100%', background: `linear-gradient(155deg, ${theme.primary} 0%, #4338CA 100%)`, border: 'none', borderRadius: 14, padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#fff', fontSize: 16, fontWeight: 700, boxShadow: `0 6px 20px ${theme.primary}40` }}>
           <Icon.Check size={18} />
-          <span>Uložit záznam</span>
+          <span>{liveEdit ? 'Uložit rozpracované' : 'Uložit záznam'}</span>
         </button>
       </div>
+      {showMachinePicker && (
+        <MachinePicker
+          theme={theme} db={db}
+          onPick={(m) => { setLiveMachine(m); setShowMachinePicker(false); }}
+          onCancel={() => setShowMachinePicker(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1808,8 +1884,10 @@ function SearchScreen({ theme, db, scope, onBack, onHome, onOpenRecord }) {
   );
 }
 
-function DayScreen({ theme, db, dateKey, onBack, onHome, onOpenRecord, onAddRecord, refreshTick }) {
+function DayScreen({ theme, db, dateKey, onBack, onHome, onOpenRecord, onAddRecord, refreshTick, activeSession, onOpenLivePreview, onOpenLiveEdit }) {
   const [records, setRecords] = useState([]);
+  const liveElapsed = useElapsed(activeSession?.startTime, !!activeSession);
+  const isToday = dateKey === fmtDateKey(Date.now());
 
   const load = useCallback(async () => {
     const all = await db.getAll('records');
@@ -1823,7 +1901,36 @@ function DayScreen({ theme, db, dateKey, onBack, onHome, onOpenRecord, onAddReco
     <div style={{ ...S.screen, background: theme.bg }}>
       <ModalHeader theme={theme} title={fmtDateLabel(dateKey)} onBack={onBack} onHome={onHome} onAction={() => onAddRecord(dateKey)} actionIcon={Icon.Plus} />
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
-        {records.length === 0 && (
+        {isToday && activeSession && (
+          <div style={{
+            display: 'flex', width: '100%', textAlign: 'left', marginBottom: 8,
+            background: theme.emSoft, border: `1.5px solid ${theme.em}66`, borderRadius: 16,
+            overflow: 'hidden', backdropFilter: theme.blur,
+          }}>
+            <button onClick={() => onOpenLivePreview()} style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: '13px 15px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6, gap: 10 }}>
+                <span style={{ display: 'block', fontSize: 15.5, fontWeight: 700, color: theme.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
+                  {activeSession.machineName || 'Bez stroje'}
+                </span>
+                <span style={{ fontSize: 10, fontWeight: 800, padding: '3px 9px', borderRadius: 7, letterSpacing: 0.4, color: theme.em, background: theme.emSoft, flexShrink: 0, marginTop: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.em }} />
+                  PRÁVĚ PROBÍHÁ
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 2 }}>
+                <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12, fontWeight: 500, color: theme.textDim }}>
+                  od {fmtTime(activeSession.startTime)} · {fmtDuration(liveElapsed)}
+                </span>
+              </div>
+              {activeSession.issue && <div style={{ fontSize: 13.5, fontWeight: 600, color: theme.em, marginTop: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeSession.issue}</div>}
+              {activeSession.photos?.length > 0 && <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: theme.textFaint, marginTop: 4 }}><Icon.Image size={12} /> {activeSession.photos.length}</div>}
+            </button>
+            <button onClick={() => onOpenLiveEdit()} style={{ width: 46, flexShrink: 0, background: 'none', border: 'none', borderLeft: `1px solid ${theme.em}33`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.em }}>
+              <Icon.Edit size={17} />
+            </button>
+          </div>
+        )}
+        {records.length === 0 && !(isToday && activeSession) && (
           <div style={{ textAlign: 'center', padding: '48px 20px' }}>
             <div style={{ fontSize: 14, color: theme.textFaint, marginBottom: 16 }}>Tento den žádné záznamy.</div>
             <button
@@ -2921,11 +3028,11 @@ function PhotoAddButtons({ theme, onFiles }) {
 // appka na těchhle obrazovkách nemá vlastní vícesloupcový layout (na rozdíl
 // od mřížek jako Stroje/Galerie), takže plná šířka jen zhoršuje čitelnost.
 // Na mobilu (isDesktop=false) se chová jako transparentní průchozí wrapper.
-function CenteredFormWrap({ isDesktop, children }) {
+function CenteredFormWrap({ isDesktop, maxWidth = 640, children }) {
   if (!isDesktop) return children;
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', justifyContent: 'center' }}>
-      <div style={{ width: '100%', maxWidth: 640, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ width: '100%', maxWidth, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         {children}
       </div>
     </div>
@@ -2947,6 +3054,7 @@ function App() {
   activeTabRef.current = activeTab;
   const { mode, setMode, theme, resolvedName: resolvedThemeName } = useTheme();
   const isDesktop = useViewportWidth();
+  const liveEditElapsed = useElapsed(activeSession?.startTime, !!activeSession);
 
   const route = stack[stack.length - 1];
   const atRoot = stack.length === 1;
@@ -3059,6 +3167,18 @@ function App() {
     setActiveSession(session);
   }
 
+  // Uloží libovolné pole "rozpracované" opravy (stroj, typ, WO, závada,
+  // řešení) přímo do activeSession, stejně jako appka už dělá s fotkami a
+  // materiálem — díky tomu appka může nabídnout živou kartu v Dnešní opravy,
+  // synchronizovanou s panelem Foto/Materiál na Timer obrazovce, a po STOP
+  // rovnou pokračovat s tím, co bylo zadané za běhu.
+  async function updateSessionDraft(patch) {
+    if (!activeSession) return;
+    const updated = { ...activeSession, ...patch };
+    await db.put('activeSession', updated);
+    setActiveSession(updated);
+  }
+
   // Přidá jednu nebo více fotek pořízených/vybraných během běžícího timeru rovnou
   // do activeSession v IndexedDB, takže přežijí zavření appky stejně spolehlivě
   // jako čas. Vždy dostane pole (i pro jednu fotku), ať se víc fotek vybraných
@@ -3105,10 +3225,22 @@ function App() {
 
   async function stopTimer() {
     const endTime = Date.now();
-    setPendingSession({ startTime: activeSession.startTime, endTime, photos: activeSession.photos || [], materials: activeSession.materials || [] });
+    const draft = {
+      startTime: activeSession.startTime, endTime,
+      photos: activeSession.photos || [], materials: activeSession.materials || [],
+      type: activeSession.type, cmSubtype: activeSession.cmSubtype, emSubtype: activeSession.emSubtype,
+      wo: activeSession.wo, issue: activeSession.issue, solution: activeSession.solution,
+    };
+    setPendingSession(draft);
     await db.delete('activeSession', 'active');
     setActiveSession(null);
-    push('pickMachine');
+    // Stroj zadaný už za běhu timeru appka nenechá vybírat znovu — jde
+    // rovnou do zbytku formuláře, předvyplněného vším, co bylo zadané živě.
+    if (activeSession.machineId) {
+      push('recordForm', { machine: { id: activeSession.machineId, name: activeSession.machineName } });
+    } else {
+      push('pickMachine');
+    }
   }
 
   // Ruční přidání opravy zpětně do libovolného (i minulého) dne, z obrazovky dne.
@@ -3302,19 +3434,42 @@ function App() {
             />
           </CenteredFormWrap>
         )}
-        {route.screen === 'year' && (
+        {route.screen === 'livePreview' && activeSession && (
           <CenteredFormWrap isDesktop={isDesktop}>
+            <LivePreview
+              theme={theme} session={activeSession} liveElapsed={liveEditElapsed}
+              onBack={() => pop(1)} onHome={() => switchTab('timer')}
+              onEdit={() => replaceTop({ screen: 'liveEdit' })}
+            />
+          </CenteredFormWrap>
+        )}
+        {route.screen === 'liveEdit' && activeSession && (
+          <CenteredFormWrap isDesktop={isDesktop}>
+            <RecordForm
+              theme={theme} db={db}
+              session={activeSession}
+              liveEdit
+              onLiveSave={updateSessionDraft}
+              liveElapsed={fmtDuration(liveEditElapsed)}
+              onSave={() => pop(1)}
+              onCancel={() => pop(1)}
+              resolvedThemeName={resolvedThemeName}
+            />
+          </CenteredFormWrap>
+        )}
+        {route.screen === 'year' && (
+          <CenteredFormWrap isDesktop={isDesktop} maxWidth={900}>
             <YearScreen theme={theme} db={db} onBack={atRoot ? undefined : () => pop(1)} onHome={() => switchTab('timer')} onOpenMonth={(monthKey) => push('month', { monthKey })} onAddRecord={startBackfillWithPicker} onSearch={(scope) => push('search', { scope })} refreshTick={refreshTick} />
           </CenteredFormWrap>
         )}
         {route.screen === 'month' && (
-          <CenteredFormWrap isDesktop={isDesktop}>
+          <CenteredFormWrap isDesktop={isDesktop} maxWidth={900}>
             <MonthScreen theme={theme} db={db} monthKey={route.monthKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenDay={(dateKey) => push('day', { dateKey })} onAddRecord={startBackfillWithPicker} onSearch={(scope) => push('search', { scope })} refreshTick={refreshTick} onNavigateMonth={(mk) => replaceTop({ monthKey: mk })} />
           </CenteredFormWrap>
         )}
         {route.screen === 'day' && (
-          <CenteredFormWrap isDesktop={isDesktop}>
-            <DayScreen theme={theme} db={db} dateKey={route.dateKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenRecord={(r) => push('recordDetail', { record: r })} onAddRecord={startBackfill} refreshTick={refreshTick} />
+          <CenteredFormWrap isDesktop={isDesktop} maxWidth={900}>
+            <DayScreen theme={theme} db={db} dateKey={route.dateKey} onBack={() => pop(1)} onHome={() => switchTab('timer')} onOpenRecord={(r) => push('recordDetail', { record: r })} onAddRecord={startBackfill} refreshTick={refreshTick} activeSession={activeSession} onOpenLivePreview={() => push('livePreview')} onOpenLiveEdit={() => push('liveEdit')} />
           </CenteredFormWrap>
         )}
         {route.screen === 'search' && (
@@ -3328,6 +3483,14 @@ function App() {
           </CenteredFormWrap>
         )}
       </div>
+      {isDesktop && (
+        <TodayPanel
+          theme={theme} db={db} refreshTick={refreshTick} activeSession={activeSession}
+          onOpenRecord={(r) => push('recordDetail', { record: r })}
+          onOpenLivePreview={() => push('livePreview')}
+          onOpenLiveEdit={() => push('liveEdit')}
+        />
+      )}
       {atRoot && !isDesktop && (
         <TabBar theme={theme} activeTab={activeTab} onSwitch={switchTab} />
       )}
@@ -3386,6 +3549,188 @@ function SideNav({ theme, activeTab, onSwitch, onOpenSettings }) {
         <Icon.Settings size={19} />
         <span style={{ fontSize: 14, fontWeight: 500 }}>Nastavení</span>
       </button>
+    </div>
+  );
+}
+
+// Postranní panel s dnešními opravami — na desktopu vždy viditelný napravo,
+// nezávisle na tom, na jaké obrazovce appka zrovna je (Timer/Historie/
+// Galerie/Stroje), stejně jako SideNav vlevo. Zahrnuje i živou kartu
+// "Právě probíhá", pokud běží timer, hned nad hotovými dnešními záznamy.
+function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpenLivePreview, onOpenLiveEdit }) {
+  const [todayRecords, setTodayRecords] = useState([]);
+  const liveElapsed = useElapsed(activeSession?.startTime, !!activeSession);
+  // collapsed = ručně zasunuto (přetrvává, dokud znovu neklikneš na šipku).
+  // autoHide = "špendlík" vypnutý — panel se pak řídí najetím myši místo
+  // ručního stavu: v klidu zasunutý, po hoveru se vysune, po opuštění zase
+  // zpátky. Obojí se ukládá do settings, ať appka nezapomene volbu po
+  // refreshi — stejný vzor jako appka má pro téma nebo počet sloupců mřížky.
+  const [collapsed, setCollapsed] = useState(false);
+  const [autoHide, setAutoHide] = useState(false);
+  const [hovering, setHovering] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!db) return;
+    db.get('settings', 'todayPanel').then(result => {
+      if (result) {
+        setCollapsed(!!result.collapsed);
+        setAutoHide(!!result.autoHide);
+      }
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+  }, [db]);
+
+  function toggleCollapsed() {
+    const next = !collapsed;
+    setCollapsed(next);
+    if (db) db.put('settings', { id: 'todayPanel', collapsed: next, autoHide });
+  }
+
+  function toggleAutoHide() {
+    const next = !autoHide;
+    setAutoHide(next);
+    if (db) db.put('settings', { id: 'todayPanel', collapsed, autoHide: next });
+  }
+
+  useEffect(() => {
+    if (!db) return;
+    const todayKey = fmtDateKey(Date.now());
+    db.getAll('records').then(all => {
+      const todays = all.filter(r => r.date === todayKey);
+      todays.sort((a, b) => b.startTime - a.startTime);
+      setTodayRecords(todays);
+    });
+  }, [db, refreshTick, activeSession]);
+
+  // Šířka panelu podle stavu: auto-hide zasunutý = úzký pruh, dokud nenajedeš
+  // myší; ručně zasunutý = stejný úzký pruh, ale bez reakce na myš; jinak
+  // plná šířka. Appka mění jen šířku (ne display:none), ať jde plynule
+  // animovat přes CSS transition, stejně jako appka dělá u dalších přechodů.
+  const isOpen = autoHide ? hovering : !collapsed;
+  const width = isOpen ? 320 : 44;
+
+  if (!loaded) return <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${theme.border}` }} />;
+
+  const liveCount = activeSession ? 1 : 0;
+  const totalCount = todayRecords.length + liveCount;
+
+  return (
+    <div
+      onMouseEnter={() => autoHide && setHovering(true)}
+      onMouseLeave={() => autoHide && setHovering(false)}
+      style={{
+        width, flexShrink: 0, borderLeft: `1px solid ${theme.border}`, overflow: 'hidden',
+        transition: 'width 0.22s ease', display: 'flex', flexDirection: 'column', position: 'relative',
+      }}
+    >
+      {!isOpen && (
+        // Sbalený stav ukazuje jen úzký pruh s ikonami — appka tu nezobrazuje
+        // useknutý text (ten by při overflow:hidden vypadal vizuálně rozbitě),
+        // jen tlačítka pro znovu-rozbalení a malý odznak s počtem, ať je i ve
+        // sbaleném stavu vidět, že dnes něco je.
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 24, gap: 10 }}>
+          <button
+            onClick={autoHide ? toggleAutoHide : toggleCollapsed}
+            title={autoHide ? 'Automatické skrývání zapnuto' : 'Rozbalit panel'}
+            style={{ width: 28, height: 28, borderRadius: 8, background: autoHide ? theme.primarySoft : 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: autoHide ? theme.primary : theme.textFaint }}
+          >
+            {autoHide ? <Icon.Pin size={14} weight="fill" /> : <Icon.ChevronRight size={15} style={{ transform: 'rotate(180deg)' }} />}
+          </button>
+          {totalCount > 0 && (
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: theme.primary, background: theme.primarySoft, borderRadius: 8, padding: '2px 6px', fontVariantNumeric: 'tabular-nums' }}>
+              {totalCount}
+            </span>
+          )}
+          {activeSession && <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.em }} />}
+        </div>
+      )}
+      <div style={{ width: 320, padding: '24px 22px', overflowY: isOpen ? 'auto' : 'hidden', flex: 1, opacity: isOpen ? 1 : 0, pointerEvents: isOpen ? 'auto' : 'none', transition: 'opacity 0.15s ease' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: theme.textFaint, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap' }}>
+            Dnešní opravy
+          </div>
+          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+            <button
+              onClick={toggleAutoHide}
+              title={autoHide ? 'Automatické skrývání zapnuto' : 'Automatické skrývání vypnuto'}
+              style={{ width: 24, height: 24, borderRadius: 7, background: autoHide ? theme.primarySoft : 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: autoHide ? theme.primary : theme.textFaint }}
+            >
+              <Icon.Pin size={13} weight={autoHide ? 'fill' : 'regular'} />
+            </button>
+            {!autoHide && (
+              <button
+                onClick={toggleCollapsed}
+                title="Zasunout panel"
+                style={{ width: 24, height: 24, borderRadius: 7, background: 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint }}
+              >
+                <Icon.ChevronRight size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+        {!activeSession && todayRecords.length === 0 ? (
+          <div style={{ fontSize: 13, color: theme.textFaint, lineHeight: 1.5 }}>
+            Zatím žádné záznamy pro dnešní den.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {activeSession && (
+            <div style={{
+              display: 'flex', width: '100%',
+              background: theme.emSoft, border: `1.5px solid ${theme.em}66`, borderRadius: 14,
+              overflow: 'hidden', backdropFilter: theme.blur,
+            }}>
+              <button onClick={() => onOpenLivePreview()} style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: '10px 12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+                  <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
+                    {activeSession.machineName || 'Bez stroje'}
+                  </span>
+                  <span style={{ fontSize: 9.5, fontWeight: 800, padding: '2px 7px', borderRadius: 6, letterSpacing: 0.3, color: theme.em, background: theme.emSoft, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: theme.em }} />
+                    PROBÍHÁ
+                  </span>
+                </div>
+                <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5, color: theme.textDim }}>
+                  od {fmtTime(activeSession.startTime)} · {fmtDuration(liveElapsed)}
+                </span>
+                {activeSession.issue && <div style={{ fontSize: 12, fontWeight: 600, color: theme.em, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeSession.issue}</div>}
+              </button>
+              <button onClick={() => onOpenLiveEdit()} style={{ width: 38, flexShrink: 0, background: 'none', border: 'none', borderLeft: `1px solid ${theme.em}33`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.em }}>
+                <Icon.Edit size={15} />
+              </button>
+            </div>
+          )}
+          {todayRecords.map(r => {
+            const color = r.type === 'EM' ? (r.emSubtype === 'bezProstoje' ? theme.emAlt : theme.em) : (r.cmSubtype === 'oprava' ? theme.cmAlt : theme.cm);
+            const soft = r.type === 'EM' ? (r.emSubtype === 'bezProstoje' ? theme.emAltSoft : theme.emSoft) : (r.cmSubtype === 'oprava' ? theme.cmAltSoft : theme.cmSoft);
+            const displayDuration = r.type === 'EM' ? (r.downtimeMs ?? (r.endTime - r.startTime)) : (r.endTime - r.startTime);
+            return (
+              <button
+                key={r.id}
+                onClick={() => onOpenRecord(r)}
+                style={{
+                  display: 'flex', width: '100%', textAlign: 'left',
+                  background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 14,
+                  overflow: 'hidden', backdropFilter: theme.blur,
+                }}
+              >
+                <div style={{ width: 4, background: color, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0, padding: '10px 12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700, color: theme.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>{r.machineName}</span>
+                    <span style={{ fontSize: 9.5, fontWeight: 800, padding: '2px 7px', borderRadius: 6, letterSpacing: 0.3, color, background: soft, flexShrink: 0 }}>{r.type}</span>
+                  </div>
+                  <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 11.5, color: theme.textDim }}>
+                    {fmtTime(r.startTime)}–{fmtTime(r.endTime)} · {fmtDurationMin(displayDuration)}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      </div>
     </div>
   );
 }
