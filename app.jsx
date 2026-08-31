@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.49';
+const APP_VERSION = '6.52';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -617,12 +617,17 @@ function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings,
         <div style={{ flex: 1, minHeight: 76 }} />
       )}
 
-      <div style={{ padding: '0 22px 12px', flexShrink: 0 }}>
-        <button style={{ ...S.historyLink, color: theme.textDim, padding: '0', width: '100%' }} onClick={onOpenToday}>
-          <span>Dnešní opravy</span>
-          <Icon.ChevronRight size={17} />
-        </button>
-      </div>
+      {!isDesktop && (
+        <div style={{ padding: '0 22px 12px', flexShrink: 0 }}>
+          <button style={{ ...S.historyLink, color: theme.textDim, padding: '0', width: '100%' }} onClick={onOpenToday}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              {activeSession && <span style={{ width: 7, height: 7, borderRadius: '50%', background: theme.em, animation: 'livePulse 1.4s ease-in-out infinite' }} />}
+              <span>Dnešní opravy</span>
+            </span>
+            <Icon.ChevronRight size={17} />
+          </button>
+        </div>
+      )}
       </div>
 
       {showPhotoModal && (
@@ -636,17 +641,19 @@ function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings,
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '4px 20px 20px' }}>
               <div style={{ display: 'flex', justifyContent: 'center', gap: 28, marginBottom: 20 }}>
-                <button onClick={() => cameraInputRef.current?.click()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', border: 'none' }}>
-                  <div style={{ width: 46, height: 46, borderRadius: 13, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim }}>
-                    <Icon.Camera size={19} />
-                  </div>
-                  <span style={{ fontSize: 10.5, fontWeight: 600, color: theme.textFaint }}>Kamera</span>
-                </button>
+                {!isDesktop && (
+                  <button onClick={() => cameraInputRef.current?.click()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', border: 'none' }}>
+                    <div style={{ width: 46, height: 46, borderRadius: 13, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim }}>
+                      <Icon.Camera size={19} />
+                    </div>
+                    <span style={{ fontSize: 10.5, fontWeight: 600, color: theme.textFaint }}>Kamera</span>
+                  </button>
+                )}
                 <button onClick={() => galleryInputRef.current?.click()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, background: 'none', border: 'none' }}>
                   <div style={{ width: 46, height: 46, borderRadius: 13, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textDim }}>
                     <Icon.Image size={19} />
                   </div>
-                  <span style={{ fontSize: 10.5, fontWeight: 600, color: theme.textFaint }}>Nahrát z galerie</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: theme.textFaint }}>{isDesktop ? 'Nahrát z počítače' : 'Nahrát z galerie'}</span>
                 </button>
               </div>
               {(activeSession?.photos || []).length === 0 ? (
@@ -3483,12 +3490,14 @@ function App() {
           </CenteredFormWrap>
         )}
       </div>
-      {isDesktop && (
+      {isDesktop && !(route.screen === 'day' && route.dateKey === fmtDateKey(Date.now())) && (
         <TodayPanel
           theme={theme} db={db} refreshTick={refreshTick} activeSession={activeSession}
           onOpenRecord={(r) => push('recordDetail', { record: r })}
           onOpenLivePreview={() => push('livePreview')}
           onOpenLiveEdit={() => push('liveEdit')}
+          onOpenToday={goToTodayInHistory}
+          onAddRecord={startBackfill}
         />
       )}
       {atRoot && !isDesktop && (
@@ -3557,18 +3566,23 @@ function SideNav({ theme, activeTab, onSwitch, onOpenSettings }) {
 // nezávisle na tom, na jaké obrazovce appka zrovna je (Timer/Historie/
 // Galerie/Stroje), stejně jako SideNav vlevo. Zahrnuje i živou kartu
 // "Právě probíhá", pokud běží timer, hned nad hotovými dnešními záznamy.
-function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpenLivePreview, onOpenLiveEdit }) {
+function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpenLivePreview, onOpenLiveEdit, onOpenToday, onAddRecord }) {
   const [todayRecords, setTodayRecords] = useState([]);
   const liveElapsed = useElapsed(activeSession?.startTime, !!activeSession);
   // collapsed = ručně zasunuto (přetrvává, dokud znovu neklikneš na šipku).
   // autoHide = "špendlík" vypnutý — panel se pak řídí najetím myši místo
   // ručního stavu: v klidu zasunutý, po hoveru se vysune, po opuštění zase
-  // zpátky. Obojí se ukládá do settings, ať appka nezapomene volbu po
-  // refreshi — stejný vzor jako appka má pro téma nebo počet sloupců mřížky.
+  // zpátky. openWidth je šířka panelu v otevřeném stavu, jde ji natáhnout
+  // tažením za úchyt. Všechno tři se ukládá do settings, ať appka nezapomene
+  // volbu po refreshi — stejný vzor jako appka má pro téma nebo počet
+  // sloupců mřížky.
   const [collapsed, setCollapsed] = useState(false);
   const [autoHide, setAutoHide] = useState(false);
   const [hovering, setHovering] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [openWidth, setOpenWidth] = useState(320);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragRef = useRef({ startX: 0, startWidth: 320 });
 
   useEffect(() => {
     if (!db) return;
@@ -3576,6 +3590,7 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
       if (result) {
         setCollapsed(!!result.collapsed);
         setAutoHide(!!result.autoHide);
+        if (result.openWidth) setOpenWidth(result.openWidth);
       }
       setLoaded(true);
     }).catch(() => setLoaded(true));
@@ -3584,13 +3599,47 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
   function toggleCollapsed() {
     const next = !collapsed;
     setCollapsed(next);
-    if (db) db.put('settings', { id: 'todayPanel', collapsed: next, autoHide });
+    if (db) db.put('settings', { id: 'todayPanel', collapsed: next, autoHide, openWidth });
   }
 
   function toggleAutoHide() {
     const next = !autoHide;
     setAutoHide(next);
-    if (db) db.put('settings', { id: 'todayPanel', collapsed, autoHide: next });
+    if (db) db.put('settings', { id: 'todayPanel', collapsed, autoHide: next, openWidth });
+  }
+
+  // Tažení za úchyt mění openWidth živě (appka reaguje okamžitě, žádná
+  // animace při tažení — ta je jen pro klikací zasouvání/rozbalování).
+  // Šířka je omezená mezi 260 a 560px, ať panel nezmizí ani nezabere
+  // nesmyslně moc místa. Appka poslouchá mousemove/mouseup na celém oknu,
+  // ne jen na úchytu — tažení jinak přestane fungovat, jakmile kurzor
+  // sjede mimo malý úchyt během rychlého pohybu myši.
+  useEffect(() => {
+    if (!isDragging) return;
+    function handleMouseMove(e) {
+      const delta = dragRef.current.startX - e.clientX;
+      if (Math.abs(delta) > 3) dragRef.current.moved = true;
+      const next = Math.max(260, Math.min(560, dragRef.current.startWidth + delta));
+      setOpenWidth(next);
+    }
+    function handleMouseUp() {
+      setIsDragging(false);
+      setOpenWidth(current => {
+        if (db) db.put('settings', { id: 'todayPanel', collapsed, autoHide, openWidth: current });
+        return current;
+      });
+    }
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, db, collapsed, autoHide]);
+
+  function startDrag(e) {
+    dragRef.current = { startX: e.clientX, startWidth: openWidth, moved: false };
+    setIsDragging(true);
   }
 
   useEffect(() => {
@@ -3605,10 +3654,12 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
 
   // Šířka panelu podle stavu: auto-hide zasunutý = úzký pruh, dokud nenajedeš
   // myší; ručně zasunutý = stejný úzký pruh, ale bez reakce na myš; jinak
-  // plná šířka. Appka mění jen šířku (ne display:none), ať jde plynule
-  // animovat přes CSS transition, stejně jako appka dělá u dalších přechodů.
+  // otevřená šířka (výchozí 320px, nebo ta, na kterou si appku natáhl
+  // tažením). Appka mění jen šířku (ne display:none), ať jde plynule
+  // animovat přes CSS transition — kromě samotného tažení, to musí být
+  // okamžité, jinak by odezva na pohyb myši opožďovala za kurzorem.
   const isOpen = autoHide ? hovering : !collapsed;
-  const width = isOpen ? 320 : 44;
+  const width = isOpen ? openWidth : 44;
 
   if (!loaded) return <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${theme.border}` }} />;
 
@@ -3620,37 +3671,72 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
       onMouseEnter={() => autoHide && setHovering(true)}
       onMouseLeave={() => autoHide && setHovering(false)}
       style={{
-        width, flexShrink: 0, borderLeft: `1px solid ${theme.border}`, overflow: 'hidden',
-        transition: 'width 0.22s ease', display: 'flex', flexDirection: 'column', position: 'relative',
+        width, flexShrink: 0, borderLeft: `1px solid ${theme.border}`,
+        transition: isDragging ? 'none' : 'width 0.22s ease', display: 'flex', flexDirection: 'column', position: 'relative',
       }}
     >
+      {/* Úchyt na levém okraji panelu — vždy vertikálně vycentrovaný na
+          hranici mezi panelem a hlavním obsahem, ať je panel v jakémkoliv
+          stavu (otevřený, zasunutý, auto-hide). Klik zasune/rozbalí panel;
+          pokud je zapnuté auto-hide, klik ho zároveň vypne, ať panel po
+          otevření zůstane trvale otevřený místo aby se hned zase sám
+          zavřel při odjezdu myši. Šipka se otáčí podle aktuálního stavu. */}
+      <button
+        onMouseDown={startDrag}
+        onClick={() => {
+          // Tažení už samo přepnulo openWidth přes mousemove — pokud appka
+          // zaznamenala skutečný pohyb (ne jen krátké cvaknutí), tenhle
+          // klik se má ignorovat, ať se panel navíc nezasune/nerozbalí.
+          if (dragRef.current.moved) { dragRef.current.moved = false; return; }
+          if (autoHide) {
+            setAutoHide(false);
+            setCollapsed(false);
+            if (db) db.put('settings', { id: 'todayPanel', collapsed: false, autoHide: false, openWidth });
+          } else {
+            toggleCollapsed();
+          }
+        }}
+        title={isOpen ? 'Zasunout panel (nebo přetáhni pro změnu šířky)' : 'Otevřít panel'}
+        style={{
+          position: 'absolute', top: '50%', left: -12, transform: 'translateY(-50%)',
+          width: 22, height: 40, borderRadius: 8, zIndex: 2, cursor: isOpen ? 'ew-resize' : 'pointer',
+          background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint,
+          boxShadow: theme.shadow,
+        }}
+      >
+        <Icon.ChevronRight size={13} style={{ transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
+      </button>
+      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       {!isOpen && (
-        // Sbalený stav ukazuje jen úzký pruh s ikonami — appka tu nezobrazuje
-        // useknutý text (ten by při overflow:hidden vypadal vizuálně rozbitě),
-        // jen tlačítka pro znovu-rozbalení a malý odznak s počtem, ať je i ve
-        // sbaleném stavu vidět, že dnes něco je.
+        // Sbalený stav ukazuje jen malý odznak s počtem a tečku (probíhá
+        // oprava) — samotné otevírání/zavírání teď řeší úchyt na levém
+        // okraji panelu (níž), ne tlačítko uvnitř sbaleného pruhu.
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 24, gap: 10 }}>
-          <button
-            onClick={autoHide ? toggleAutoHide : toggleCollapsed}
-            title={autoHide ? 'Automatické skrývání zapnuto' : 'Rozbalit panel'}
-            style={{ width: 28, height: 28, borderRadius: 8, background: autoHide ? theme.primarySoft : 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: autoHide ? theme.primary : theme.textFaint }}
-          >
-            {autoHide ? <Icon.Pin size={14} weight="fill" /> : <Icon.ChevronRight size={15} style={{ transform: 'rotate(180deg)' }} />}
-          </button>
           {totalCount > 0 && (
             <span style={{ fontSize: 10.5, fontWeight: 800, color: theme.primary, background: theme.primarySoft, borderRadius: 8, padding: '2px 6px', fontVariantNumeric: 'tabular-nums' }}>
               {totalCount}
             </span>
           )}
-          {activeSession && <span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.em }} />}
+          {activeSession && <span style={{ width: 7, height: 7, borderRadius: '50%', background: theme.em, animation: 'livePulse 1.4s ease-in-out infinite' }} />}
         </div>
       )}
-      <div style={{ width: 320, padding: '24px 22px', overflowY: isOpen ? 'auto' : 'hidden', flex: 1, opacity: isOpen ? 1 : 0, pointerEvents: isOpen ? 'auto' : 'none', transition: 'opacity 0.15s ease' }}>
+      <div style={{ width: openWidth, padding: '24px 22px', overflowY: isOpen ? 'auto' : 'hidden', flex: 1, opacity: isOpen ? 1 : 0, pointerEvents: isOpen ? 'auto' : 'none', transition: isDragging ? 'none' : 'opacity 0.15s ease' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: theme.textFaint, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap' }}>
+          <button
+            onClick={onOpenToday}
+            style={{ fontSize: 13, fontWeight: 700, color: theme.textFaint, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap', background: 'none', border: 'none', padding: 0 }}
+          >
             Dnešní opravy
-          </div>
+          </button>
           <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+            <button
+              onClick={() => onAddRecord(fmtDateKey(Date.now()))}
+              title="Přidat opravu do dnešního dne"
+              style={{ width: 24, height: 24, borderRadius: 7, background: 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint }}
+            >
+              <Icon.Plus size={15} />
+            </button>
             <button
               onClick={toggleAutoHide}
               title={autoHide ? 'Automatické skrývání zapnuto' : 'Automatické skrývání vypnuto'}
@@ -3658,21 +3744,16 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
             >
               <Icon.Pin size={13} weight={autoHide ? 'fill' : 'regular'} />
             </button>
-            {!autoHide && (
-              <button
-                onClick={toggleCollapsed}
-                title="Zasunout panel"
-                style={{ width: 24, height: 24, borderRadius: 7, background: 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint }}
-              >
-                <Icon.ChevronRight size={14} />
-              </button>
-            )}
           </div>
         </div>
         {!activeSession && todayRecords.length === 0 ? (
-          <div style={{ fontSize: 13, color: theme.textFaint, lineHeight: 1.5 }}>
-            Zatím žádné záznamy pro dnešní den.
-        </div>
+          <button
+            onClick={() => onAddRecord(fmtDateKey(Date.now()))}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', background: theme.primarySoft, border: `1.5px dashed ${theme.primary}66`, borderRadius: 14, padding: '14px 12px', color: theme.primary, fontSize: 13, fontWeight: 600 }}
+          >
+            <Icon.Plus size={15} />
+            <span>Přidat opravu do tohoto dne</span>
+          </button>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {activeSession && (
@@ -3730,6 +3811,7 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
           })}
         </div>
       )}
+      </div>
       </div>
     </div>
   );
