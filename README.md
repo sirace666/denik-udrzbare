@@ -12,7 +12,7 @@ Appka, která zjednoduší život lidem na opravě. Jednoduchá webová appka (P
 - **Zápis opravy** – číslo WO, závada, řešení, fotky z fotoaparátu nebo galerie, materiál (počet kusů, skladové číslo, název).
 - **Materiál za běhu opravy** – fotky i materiál jde přidávat, upravovat i mazat přímo během běžící časomíry, ne až po STOP.
 - **Živý náhled probíhající opravy** – jakmile appka spustí časomíru, v Dnešní opravy se objeví karta „Právě probíhá" – appka jde otevřít a rovnou zadat stroj, typ opravy, WO, závadu, řešení, fotky i materiál, ještě než dáš STOP. Po zastavení appka doplní jen čas a pokračuje přímo do uložení, se strojem už přeskočeným.
-- **Historie** – přehled podle roku i měsíce, statistiky (počty CM/CM Oprava/EM, celkový čas prostojů), detail dne se seznamem záznamů.
+- **Historie** – přehled podle roku i měsíce, statistiky pro čtyři typy oprav (CM, CM Oprava, EM s prostojem, EM bez prostoje), detail dne se seznamem záznamů. Klepnutím na kterýkoliv typ ve statistikách appka daný typ dočasně vyfiltruje – nezobrazuje se v číslech ani v barevných tečkách kalendáře.
 - **Hledání** – v rámci roku nebo konkrétního měsíce, podle textu (závada, řešení, WO, materiál), stroje nebo typu opravy, kombinovatelné.
 - **Galerie** – všechny fotky napříč opravami na jednom místě, řazené podle data, s možností hromadně sdílet/kopírovat/stáhnout/smazat.
 - **Přiblížení fotek** – gesto přiblížení/oddálení (pinch), tažení při přiblížení, dvojklik pro rychlý zoom – funguje všude, kde appka zobrazuje fotku na celou obrazovku.

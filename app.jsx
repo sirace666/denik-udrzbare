@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.52';
+const APP_VERSION = '6.60';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -112,6 +112,18 @@ function fmtDurationShort(ms) {
 function fmtTime(ts) {
   const d = new Date(ts);
   return `${d.getHours()}:${pad(d.getMinutes())}`;
+}
+
+// Rozdělí label typu opravy na "prefix" (CM/EM, appka ho zobrazí jako malý
+// barevný štítek nahoře karty) a "podtyp" (Práce/Oprava/S prostojem/Bez
+// prostoje, čitelný text pod štítkem) — appka tak na úzké kartě nezalamuje
+// jeden dlouhý řetězec, ale rovnou dvě sémanticky oddělené věci.
+function splitTypeLabel(label) {
+  if (label === 'CM') return { prefix: 'CM', subtype: 'Práce' };
+  if (label === 'CM Oprava') return { prefix: 'CM', subtype: 'Oprava' };
+  if (label === 'EM s prostojem') return { prefix: 'EM', subtype: 'S prostojem' };
+  if (label === 'EM bez prostoje') return { prefix: 'EM', subtype: 'Bez prostoje' };
+  return { prefix: label, subtype: '' };
 }
 
 // Zaokrouhlí timestamp na nejbližších 5 minut (matematicky — .5 nahoru),
@@ -1444,6 +1456,20 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
   const isDesktop = useViewportWidth();
   const [records, setRecords] = useState([]);
   const [year, setYear] = useState(initialYear || new Date().getFullYear());
+  // Filtr podle typu opravy — appka používá stejné čtyři kategorie a stejné
+  // pořadí/barvy jako SEARCH_TYPE_OPTIONS (appka to tak už filtruje ve
+  // vyhledávání), ať je konzistentní napříč appkou. Vypnutý typ (není v
+  // activeTypes) appka vynechá jak ze statistik nahoře, tak z dlaždic
+  // měsíců — funguje jako živý filtr, ne jen vizuální přepínač.
+  const [activeTypes, setActiveTypes] = useState(() => new Set(SEARCH_TYPE_OPTIONS.map(o => o.key)));
+
+  function toggleType(key) {
+    setActiveTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
 
   const load = useCallback(async () => {
     const all = await db.getAll('records');
@@ -1457,9 +1483,13 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
     records.forEach(r => {
       const [y, m] = r.date.split('-').map(Number);
       if (y !== year) return;
-      if (!map[m]) map[m] = { cm: 0, cmOprava: 0, em: 0, emTime: 0 };
+      const typeKey = r.type === 'EM'
+        ? ((r.emSubtype || 'sProstojem') === 'sProstojem' ? 'em-sprostojem' : 'em-bezprostoje')
+        : (r.cmSubtype === 'oprava' ? 'cm-oprava' : 'cm-normal');
+      if (!activeTypes.has(typeKey)) return;
+      if (!map[m]) map[m] = { cm: 0, cmOprava: 0, emSProstojem: 0, emBezProstoje: 0, emTime: 0 };
       if (r.type === 'EM') {
-        map[m].em++;
+        if (typeKey === 'em-sprostojem') map[m].emSProstojem++; else map[m].emBezProstoje++;
         map[m].emTime += r.downtimeMs ?? (r.endTime - r.startTime);
       } else if (r.cmSubtype === 'oprava') {
         map[m].cmOprava++;
@@ -1468,12 +1498,12 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
       }
     });
     return map;
-  }, [records, year]);
+  }, [records, year, activeTypes]);
 
   const yearStats = useMemo(() => {
-    let cm = 0, cmOprava = 0, em = 0, emTime = 0;
-    Object.values(monthsInYear).forEach(m => { cm += m.cm; cmOprava += m.cmOprava; em += m.em; emTime += m.emTime; });
-    return { cm, cmOprava, em, emTime };
+    let cm = 0, cmOprava = 0, emSProstojem = 0, emBezProstoje = 0;
+    Object.values(monthsInYear).forEach(m => { cm += m.cm; cmOprava += m.cmOprava; emSProstojem += m.emSProstojem; emBezProstoje += m.emBezProstoje; });
+    return { cm, cmOprava, emSProstojem, emBezProstoje };
   }, [monthsInYear]);
 
   const availableYears = useMemo(() => {
@@ -1500,32 +1530,35 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
 
       <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 20px 16px' }}>
         <div style={{ display: 'flex', gap: 8, width: '100%' }}>
-          <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
-            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.cm }}>{yearStats.cm}</div>
-            <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>CM</div>
-          </Card>
-          <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
-            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.cmAlt }}>{yearStats.cmOprava}</div>
-            <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>CM Oprava</div>
-          </Card>
-          <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
-            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.em }}>{yearStats.em}</div>
-            <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>EM</div>
-          </Card>
-          <Card theme={theme} style={{ flex: 1, padding: '10px 6px', textAlign: 'center' }}>
-            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.text }}>{fmtDurationMin(yearStats.emTime)}</div>
-            <div style={{ fontSize: 9.5, color: theme.textFaint, marginTop: 2 }}>prostoje</div>
-          </Card>
+          {SEARCH_TYPE_OPTIONS.map(opt => {
+            const active = activeTypes.has(opt.key);
+            const count = opt.key === 'cm-normal' ? yearStats.cm : opt.key === 'cm-oprava' ? yearStats.cmOprava : opt.key === 'em-sprostojem' ? yearStats.emSProstojem : yearStats.emBezProstoje;
+            const { prefix, subtype } = splitTypeLabel(opt.label);
+            return (
+              <button
+                key={opt.key}
+                onClick={() => toggleType(opt.key)}
+                style={{ flex: 1, padding: '9px 6px 8px', textAlign: 'center', borderRadius: 14, background: theme.surface, border: `1px solid ${theme.border}`, backdropFilter: theme.blur, opacity: active ? 1 : 0.4, transition: 'opacity 0.15s ease', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}
+              >
+                <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3, color: theme[opt.colorKey], background: theme[`${opt.colorKey}Soft`], borderRadius: 6, padding: '1.5px 7px' }}>{prefix}</span>
+                <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.text, lineHeight: 1.1 }}>{count}</div>
+                <div style={{ fontSize: 9, color: theme.textFaint, lineHeight: 1.2 }}>{subtype}</div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px 20px', display: 'flex', justifyContent: 'center' }}>
-        <div style={{ width: '100%' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: isDesktop ? 'repeat(4, 1fr)' : '1fr 1fr', gap: 10 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: isDesktop ? '18px 20px 20px' : '0 20px 20px', display: 'flex', justifyContent: 'center' }}>
+        <div style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
+        {isDesktop && (
+          <div style={{ fontSize: 12, fontWeight: 700, color: theme.textFaint, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>Měsíce</div>
+        )}
+        <div style={{ display: 'grid', gridTemplateColumns: isDesktop ? 'repeat(auto-fit, minmax(190px, 1fr))' : '1fr 1fr', gap: 10 }}>
           {MONTH_NAMES.map((name, idx) => {
             const monthNum = idx + 1;
             const data = monthsInYear[monthNum];
-            const hasData = !!data;
+            const hasData = !!data && (data.cm > 0 || data.cmOprava > 0 || data.emSProstojem > 0 || data.emBezProstoje > 0);
             const now = new Date();
             const isFuture = year === now.getFullYear() && monthNum > now.getMonth() + 1;
             const isCurrentMonth = year === now.getFullYear() && monthNum === now.getMonth() + 1;
@@ -1536,14 +1569,18 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
                 style={{
                   background: theme.surface, border: `${isCurrentMonth ? 2 : 1}px solid ${isCurrentMonth ? theme.primary : theme.border}`, borderRadius: 16,
                   padding: isCurrentMonth ? '13px 13px' : '14px 14px', textAlign: 'left', backdropFilter: theme.blur,
-                  opacity: isFuture && !hasData ? 0.5 : 1,
+                  opacity: isFuture && !hasData ? 0.5 : 1, display: 'flex', flexDirection: 'column',
+                  aspectRatio: isDesktop ? '2.2' : undefined, justifyContent: isDesktop ? 'center' : undefined,
+                  minHeight: !isDesktop ? 92 : undefined,
                 }}
               >
                 <div style={{ fontSize: 14, fontWeight: 700, color: isCurrentMonth ? theme.text : theme.textDim, textTransform: 'capitalize', marginBottom: hasData ? 8 : 0 }}>{name}</div>
                 {hasData ? (
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     {data.cm > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.cm }}>{data.cm} CM</span>}
-                    {data.em > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.em }}>{data.em} EM</span>}
+                    {data.cmOprava > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.cmAlt }}>{data.cmOprava} CM Opr.</span>}
+                    {data.emSProstojem > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.em }}>{data.emSProstojem} EM</span>}
+                    {data.emBezProstoje > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.emAlt }}>{data.emBezProstoje} EM</span>}
                   </div>
                 ) : (
                   <div style={{ fontSize: 11, color: theme.textFaint }}>bez záznamů</div>
@@ -1552,7 +1589,7 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
             );
           })}
         </div>
-        <div style={{ height: 24 }} />
+        {!isDesktop && <div style={{ height: 24 }} />}
         </div>
       </div>
     </div>
@@ -1565,6 +1602,15 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
 function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddRecord, onSearch, refreshTick, onNavigateMonth }) {
   const isDesktop = useViewportWidth();
   const [records, setRecords] = useState([]);
+  const [activeTypes, setActiveTypes] = useState(() => new Set(SEARCH_TYPE_OPTIONS.map(o => o.key)));
+
+  function toggleType(key) {
+    setActiveTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
 
   const load = useCallback(async () => {
     const all = await db.getAll('records');
@@ -1577,22 +1623,26 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
     const map = {};
     records.forEach(r => {
       if (fmtMonthKey(r.startTime) !== monthKey) return;
-      if (!map[r.date]) map[r.date] = { cm: 0, cmOprava: 0, em: 0, items: [] };
-      if (r.type === 'EM') map[r.date].em++;
-      else if (r.cmSubtype === 'oprava') map[r.date].cmOprava++;
+      const typeKey = r.type === 'EM'
+        ? ((r.emSubtype || 'sProstojem') === 'sProstojem' ? 'em-sprostojem' : 'em-bezprostoje')
+        : (r.cmSubtype === 'oprava' ? 'cm-oprava' : 'cm-normal');
+      if (!activeTypes.has(typeKey)) return;
+      if (!map[r.date]) map[r.date] = { cm: 0, cmOprava: 0, emSProstojem: 0, emBezProstoje: 0, items: [] };
+      if (typeKey === 'em-sprostojem') map[r.date].emSProstojem++;
+      else if (typeKey === 'em-bezprostoje') map[r.date].emBezProstoje++;
+      else if (typeKey === 'cm-oprava') map[r.date].cmOprava++;
       else map[r.date].cm++;
       map[r.date].items.push(r);
     });
     return map;
-  }, [records, monthKey]);
+  }, [records, monthKey, activeTypes]);
 
   const monthStats = useMemo(() => {
-    let cm = 0, em = 0, emTime = 0;
+    let cm = 0, cmOprava = 0, emSProstojem = 0, emBezProstoje = 0;
     Object.values(daysInMonth).forEach(d => {
-      cm += d.cm + d.cmOprava; em += d.em;
-      d.items.forEach(r => { if (r.type === 'EM') emTime += r.downtimeMs ?? (r.endTime - r.startTime); });
+      cm += d.cm; cmOprava += d.cmOprava; emSProstojem += d.emSProstojem; emBezProstoje += d.emBezProstoje;
     });
-    return { cm, em, emTime };
+    return { cm, cmOprava, emSProstojem, emBezProstoje };
   }, [daysInMonth]);
 
   // "+" defaults to today if this is the current month, otherwise the 1st of the shown month.
@@ -1633,7 +1683,7 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
     <div style={{ ...S.screen, background: theme.bg }}>
       <ModalHeader theme={theme} title="Měsíc" onBack={onBack} onHome={onHome} onAction={() => onAddRecord(defaultDateForMonth())} actionIcon={Icon.Plus} onSecondaryAction={() => onSearch({ scope: 'month', monthKey })} secondaryActionIcon={Icon.Search} />
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '14px 20px 4px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '10px 20px 4px', flexShrink: 0 }}>
         <button
           onClick={() => onNavigateMonth(shiftMonthKey(monthKey, -1))}
           style={{ width: 36, height: 36, borderRadius: 10, background: theme.surface, border: `1px solid ${theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text, backdropFilter: theme.blur }}
@@ -1645,30 +1695,34 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
         ><Icon.ChevronRight size={17} /></button>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 20px 12px' }}>
-        <div style={{ display: 'flex', gap: 10, width: '100%' }}>
-          <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
-            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.cm }}>{monthStats.cm}</div>
-            <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>CM</div>
-          </Card>
-          <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
-            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.em }}>{monthStats.em}</div>
-            <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>EM</div>
-          </Card>
-          <Card theme={theme} style={{ flex: 1, padding: '12px 8px', textAlign: 'center' }}>
-            <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 19, fontWeight: 800, color: theme.text }}>{fmtDurationMin(monthStats.emTime)}</div>
-            <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 2 }}>prostoje</div>
-          </Card>
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 20px 10px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+          {SEARCH_TYPE_OPTIONS.map(opt => {
+            const active = activeTypes.has(opt.key);
+            const count = opt.key === 'cm-normal' ? monthStats.cm : opt.key === 'cm-oprava' ? monthStats.cmOprava : opt.key === 'em-sprostojem' ? monthStats.emSProstojem : monthStats.emBezProstoje;
+            const { prefix, subtype } = splitTypeLabel(opt.label);
+            return (
+              <button
+                key={opt.key}
+                onClick={() => toggleType(opt.key)}
+                style={{ flex: 1, padding: '8px 6px 7px', textAlign: 'center', borderRadius: 13, background: theme.surface, border: `1px solid ${theme.border}`, backdropFilter: theme.blur, opacity: active ? 1 : 0.4, transition: 'opacity 0.15s ease', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}
+              >
+                <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3, color: theme[opt.colorKey], background: theme[`${opt.colorKey}Soft`], borderRadius: 6, padding: '1.5px 7px' }}>{prefix}</span>
+                <div style={{ fontVariantNumeric: 'tabular-nums', fontSize: 17, fontWeight: 800, color: theme.text, lineHeight: 1.1 }}>{count}</div>
+                <div style={{ fontSize: 9, color: theme.textFaint, lineHeight: 1.2 }}>{subtype}</div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 16px 20px', display: 'flex', justifyContent: 'center' }}>
+      <div style={{ flex: 1, minHeight: 0, padding: isDesktop ? '0 16px 16px' : '4px 16px 20px', display: 'flex', justifyContent: 'center', overflowY: isDesktop ? 'hidden' : 'auto' }}>
         <div style={{
-          width: '100%',
+          width: '100%', display: 'flex', flexDirection: 'column', minHeight: isDesktop ? 0 : undefined,
           border: isCurrentMonth ? `1.5px solid ${theme.primary}44` : '1.5px solid transparent',
           borderRadius: 16, padding: isCurrentMonth ? 8 : 0,
         }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, marginBottom: 6 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, marginBottom: 6, flexShrink: 0 }}>
           {weekdayLabels.map((label, i) => (
             <div key={label} style={{
               textAlign: 'center', fontSize: 11, fontWeight: 700, letterSpacing: 0.4,
@@ -1676,41 +1730,88 @@ function MonthScreen({ theme, db, monthKey, onBack, onHome, onOpenDay, onAddReco
             }}>{label}</div>
           ))}
         </div>
-        {grid.map((week, wi) => (
-          <div key={wi} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, marginBottom: 6 }}>
-            {week.map((day, di) => {
-              if (day === null) return <div key={di} />;
-              const dateKey = `${monthKey}-${pad(day)}`;
-              const info = daysInMonth[dateKey];
-              const isWeekend = di >= 5;
-              const isToday = dateKey === todayKey;
-              const dots = [];
-              if (info) {
-                if (info.cm > 0) dots.push(theme.cm);
-                if (info.cmOprava > 0) dots.push(theme.cmAlt);
-                if (info.em > 0) dots.push(theme.em);
-              }
-              return (
-                <button
-                  key={di}
-                  onClick={() => onOpenDay(dateKey)}
-                  style={{
-                    aspectRatio: '1', borderRadius: 12, display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center', gap: 4,
-                    background: isWeekend ? theme.bgSubtle : theme.surface,
-                    border: isToday ? `1.5px solid ${theme.primary}` : `1px solid ${theme.border}`,
-                    backdropFilter: theme.blur,
-                  }}
-                >
-                  <span style={{ fontSize: 14, fontWeight: isToday ? 800 : 600, color: isToday ? theme.text : theme.textDim }}>{day}</span>
-                  <div style={{ display: 'flex', gap: 3, height: 5 }}>
-                    {dots.map((c, i) => <div key={i} style={{ width: 5, height: 5, borderRadius: '50%', background: c }} />)}
-                  </div>
-                </button>
-              );
-            })}
+        {/* Na desktopu appka roztáhne týdny přes zbylou výšku (flex+gridTemplateRows),
+            ať se celý měsíc i s posledním týdnem vejde bez scrollování — na
+            mobilu to appka nedělá, tam zůstávají čtvercové buňky a appka
+            radši scrolluje, protože přesné natažení na malou výšku obrazovky
+            by dny udělalo nečitelně nízké. */}
+        {isDesktop ? (
+          <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateRows: `repeat(${grid.length}, 1fr)`, gap: 6 }}>
+            {grid.map((week, wi) => (
+              <div key={wi} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, minHeight: 0 }}>
+                {week.map((day, di) => {
+                  if (day === null) return <div key={di} />;
+                  const dateKey = `${monthKey}-${pad(day)}`;
+                  const info = daysInMonth[dateKey];
+                  const isWeekend = di >= 5;
+                  const isToday = dateKey === todayKey;
+                  const dots = [];
+                  if (info) {
+                    if (info.cm > 0) dots.push(theme.cm);
+                    if (info.cmOprava > 0) dots.push(theme.cmAlt);
+                    if (info.emSProstojem > 0) dots.push(theme.em);
+                    if (info.emBezProstoje > 0) dots.push(theme.emAlt);
+                  }
+                  return (
+                    <button
+                      key={di}
+                      onClick={() => onOpenDay(dateKey)}
+                      style={{
+                        borderRadius: 12, display: 'flex', flexDirection: 'column', minHeight: 44,
+                        alignItems: 'center', justifyContent: 'center', gap: 4,
+                        background: isWeekend ? theme.bgSubtle : theme.surface,
+                        border: isToday ? `1.5px solid ${theme.primary}` : `1px solid ${theme.border}`,
+                        backdropFilter: theme.blur,
+                      }}
+                    >
+                      <span style={{ fontSize: 14, fontWeight: isToday ? 800 : 600, color: isToday ? theme.text : theme.textDim }}>{day}</span>
+                      <div style={{ display: 'flex', gap: 4, height: 7 }}>
+                        {dots.map((c, i) => <div key={i} style={{ width: 7, height: 7, borderRadius: '50%', background: c, boxShadow: `0 0 0 1px ${theme.bg}` }} />)}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </div>
-        ))}
+        ) : (
+          grid.map((week, wi) => (
+            <div key={wi} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, marginBottom: 6 }}>
+              {week.map((day, di) => {
+                if (day === null) return <div key={di} />;
+                const dateKey = `${monthKey}-${pad(day)}`;
+                const info = daysInMonth[dateKey];
+                const isWeekend = di >= 5;
+                const isToday = dateKey === todayKey;
+                const dots = [];
+                if (info) {
+                  if (info.cm > 0) dots.push(theme.cm);
+                  if (info.cmOprava > 0) dots.push(theme.cmAlt);
+                  if (info.emSProstojem > 0) dots.push(theme.em);
+                  if (info.emBezProstoje > 0) dots.push(theme.emAlt);
+                }
+                return (
+                  <button
+                    key={di}
+                    onClick={() => onOpenDay(dateKey)}
+                    style={{
+                      aspectRatio: '1', borderRadius: 12, display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center', gap: 4,
+                      background: isWeekend ? theme.bgSubtle : theme.surface,
+                      border: isToday ? `1.5px solid ${theme.primary}` : `1px solid ${theme.border}`,
+                      backdropFilter: theme.blur,
+                    }}
+                  >
+                    <span style={{ fontSize: 14, fontWeight: isToday ? 800 : 600, color: isToday ? theme.text : theme.textDim }}>{day}</span>
+                    <div style={{ display: 'flex', gap: 4, height: 7 }}>
+                      {dots.map((c, i) => <div key={i} style={{ width: 7, height: 7, borderRadius: '50%', background: c, boxShadow: `0 0 0 1px ${theme.bg}` }} />)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ))
+        )}
         </div>
       </div>
     </div>
@@ -3582,6 +3683,7 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
   const [loaded, setLoaded] = useState(false);
   const [openWidth, setOpenWidth] = useState(320);
   const [isDragging, setIsDragging] = useState(false);
+  const [handlePressed, setHandlePressed] = useState(false);
   const dragRef = useRef({ startX: 0, startWidth: 320 });
 
   useEffect(() => {
@@ -3638,6 +3740,7 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
   }, [isDragging, db, collapsed, autoHide]);
 
   function startDrag(e) {
+    if (!isOpen) return; // v zasunutém stavu nemá tažení smysl, panel se otevírá jen klikem na šipku
     dragRef.current = { startX: e.clientX, startWidth: openWidth, moved: false };
     setIsDragging(true);
   }
@@ -3675,19 +3778,31 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
         transition: isDragging ? 'none' : 'width 0.22s ease', display: 'flex', flexDirection: 'column', position: 'relative',
       }}
     >
-      {/* Úchyt na levém okraji panelu — vždy vertikálně vycentrovaný na
-          hranici mezi panelem a hlavním obsahem, ať je panel v jakémkoliv
+      {/* Tažitelný pruh přes celou výšku levého okraje panelu — jde za něj
+          chytit kdekoliv (kromě šipky, ta zůstává jen pro klik) a roztáhnout
+          panel do libovolné šířky. Šipka dole má vlastní menší tažitelnou
+          plochu jen kvůli zpětné kompatibilitě jejího vzhledu, ale hlavní
+          úchyt pro tažení je teď tenhle pruh. */}
+      <div
+        onMouseDown={startDrag}
+        style={{
+          position: 'absolute', top: 0, bottom: 0, left: -4, width: 8, zIndex: 1,
+          cursor: isOpen ? 'ew-resize' : 'default',
+        }}
+      />
+      {/* Úchyt (šipka) na levém okraji panelu — vždy vertikálně vycentrovaný
+          na hranici mezi panelem a hlavním obsahem, ať je panel v jakémkoliv
           stavu (otevřený, zasunutý, auto-hide). Klik zasune/rozbalí panel;
           pokud je zapnuté auto-hide, klik ho zároveň vypne, ať panel po
           otevření zůstane trvale otevřený místo aby se hned zase sám
-          zavřel při odjezdu myši. Šipka se otáčí podle aktuálního stavu. */}
+          zavřel při odjezdu myši. Šipka se otáčí podle aktuálního stavu a
+          při kliknutí lehce "pruží" (scale), ať má akce hmatatelnou odezvu.
+          Tažení řeší samostatný pruh nad touto šipkou, ne ona sama — jinak
+          by šipka reagovala na tažení i mimo svou malou plochu nekonzistentně. */}
       <button
-        onMouseDown={startDrag}
         onClick={() => {
-          // Tažení už samo přepnulo openWidth přes mousemove — pokud appka
-          // zaznamenala skutečný pohyb (ne jen krátké cvaknutí), tenhle
-          // klik se má ignorovat, ať se panel navíc nezasune/nerozbalí.
-          if (dragRef.current.moved) { dragRef.current.moved = false; return; }
+          setHandlePressed(true);
+          setTimeout(() => setHandlePressed(false), 160);
           if (autoHide) {
             setAutoHide(false);
             setCollapsed(false);
@@ -3696,10 +3811,10 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
             toggleCollapsed();
           }
         }}
-        title={isOpen ? 'Zasunout panel (nebo přetáhni pro změnu šířky)' : 'Otevřít panel'}
+        title={isOpen ? 'Zasunout panel' : 'Otevřít panel'}
         style={{
-          position: 'absolute', top: '50%', left: -12, transform: 'translateY(-50%)',
-          width: 22, height: 40, borderRadius: 8, zIndex: 2, cursor: isOpen ? 'ew-resize' : 'pointer',
+          position: 'absolute', top: '50%', left: -12, transform: `translateY(-50%) scale(${handlePressed ? 0.85 : 1})`, transition: 'transform 0.16s ease',
+          width: 22, height: 40, borderRadius: 8, zIndex: 2, cursor: 'pointer',
           background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`,
           display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint,
           boxShadow: theme.shadow,
