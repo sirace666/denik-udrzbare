@@ -23,7 +23,7 @@ Detaily:
 
   Vypnutá automatika → synchronizuje se jen tlačítkem *Obnovit* (ikona v menu vlevo), *Sync* (spodní lišta na mobilu) nebo *Synchronizovat teď* v Nastavení.
 - **Oprávnění.** Appka žádá scope `drive.file` — vidí výhradně svůj vlastní soubor, k ničemu jinému na Disku přístup nemá. Nemá vlastní server, data nikam jinam neposílá. Přístup odebereš na [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
-- **Přihlášení po obnovení stránky.** Na Chrome/Edge se token obnoví tiše. Brave/Firefox blokují tichou cestu → po refreshi krátce blikne přihlašovací okno Google (zavře se samo), nebo v Brave sniž Shields pro adresu appky.
+- **Přihlášení po obnovení stránky.** Na Chrome/Edge se token obnoví tiše a synchronizace včetně pollingu běží sama. Brave/Firefox tichou cestu blokují → po obnovení appky je synchronizace „pozastavená", dokud jednou neťukneš na ikonu *Obnovit* / *Sync* (pak drží ~1 h). První akce, kterou po otevření uděláš (START, uložení opravy…), si o připojení řekne sama. **Pro plynulou synchronizaci mezi dvěma zařízeními doporučujeme Chrome/Edge**, nebo v Brave po otevření appky na obou zařízeních ťuknout na ikonu synchronizace.
 - **Reset.** Nastavení → *Resetovat vše* smaže data v daném zařízení; při zapnuté synchronizaci si zařízení při dalším sladění stáhne společný stav z Disku (reset se do cloudu ani na jiná zařízení nepropaguje).
 
 ## Co appka umí

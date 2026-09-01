@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.73';
+const APP_VERSION = '6.74';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -312,7 +312,7 @@ async function syncNow(db) {
   let fileId = shadowRec.fileId || null;
   if (!fileId) fileId = await driveFindDataFile();
 
-  let remote = { machines: [], records: [], categories: [] };
+  let remote = { machines: [], records: [], categories: [], activeSession: [] };
   if (fileId) {
     try { remote = await driveDownloadJson(fileId); }
     catch { fileId = await driveFindDataFile(); if (fileId) remote = await driveDownloadJson(fileId); }
@@ -788,7 +788,7 @@ function Card({ theme, children, style }) {
   );
 }
 
-function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings, onOpenToday, onOpenRecord, onAddPhoto, onRemovePhoto, onAddMaterial, onUpdateMaterial, onRemoveMaterial, isDesktop, refreshTick }) {
+function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings, onOpenToday, onOpenRecord, onAddPhoto, onRemovePhoto, onAddMaterial, onUpdateMaterial, onRemoveMaterial, isDesktop, refreshTick, googleUser, syncState, onSyncClick }) {
   const elapsed = useElapsed(activeSession?.startTime, !!activeSession);
   const now = useNow();
   const [pressed, setPressed] = useState(false);
@@ -845,7 +845,12 @@ function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings,
                 <span style={{ fontSize: 15, fontWeight: 600, color: theme.text, whiteSpace: 'nowrap' }}>Deník údržbáře</span>
               </div>
             )}
-            {!isDesktop && <IconButton theme={theme} onClick={onOpenSettings}><Icon.Settings size={19} /></IconButton>}
+            {!isDesktop && (
+              <div style={{ display: 'flex', gap: 4 }}>
+                <SyncMenuButton theme={theme} googleUser={googleUser} syncState={syncState} onClick={onSyncClick} variant="icon" />
+                <IconButton theme={theme} onClick={onOpenSettings}><Icon.Settings size={19} /></IconButton>
+              </div>
+            )}
           </div>
         </div>
         {activeSession && (
@@ -3557,9 +3562,11 @@ function App() {
   const [machineColumns, setMachineColumns] = useState(3);
   const [googleUser, setGoogleUser] = useState(null); // { email } nebo null
   const [syncAuto, setSyncAuto] = useState(true);
-  const [syncState, setSyncState] = useState({ status: 'idle', lastSyncAt: null, msg: null }); // idle|syncing|ok|error
+  const [syncState, setSyncState] = useState({ status: 'idle', lastSyncAt: null, msg: null }); // idle|syncing|ok|error|reconnect
   const syncTimerRef = useRef(null);
   const syncingRef = useRef(false);
+  const syncStatusRef = useRef('idle');
+  syncStatusRef.current = syncState.status;
   const stackRef = useRef(stack);
   stackRef.current = stack;
   const activeTabRef = useRef(activeTab);
@@ -3677,10 +3684,17 @@ function App() {
   }, [db, googleUser, syncAuto, runSync]);
 
   // Auto-synchronizace po lokální změně dat (debounce), když je uživatel přihlášený.
+  // Když je spojení s Googlem "pozastavené" (prohlížeč blokuje tiché obnovení —
+  // typicky Brave/Firefox), tahle změna přišla po kliknutí uživatele, takže se
+  // rovnou pokusíme o interaktivní připojení — okno se smí otevřít, protože
+  // gesto uživatele je čerstvé. Jinak běžný tichý sync po ~2 s.
   useEffect(() => {
     if (!db || !googleUser || !syncAuto) return;
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-    syncTimerRef.current = setTimeout(() => { runSync(db, { silent: true }); }, 4000);
+    const reconnect = syncStatusRef.current === 'reconnect';
+    syncTimerRef.current = setTimeout(() => {
+      runSync(db, syncStatusRef.current === 'reconnect' ? { interactive: true } : { silent: true });
+    }, reconnect ? 400 : 2000);
     return () => { if (syncTimerRef.current) clearTimeout(syncTimerRef.current); };
   }, [refreshTick, db, googleUser, syncAuto, runSync]);
 
@@ -3998,6 +4012,9 @@ function App() {
             onRemoveMaterial={removeSessionMaterial}
             isDesktop={isDesktop}
             refreshTick={refreshTick}
+            googleUser={googleUser}
+            syncState={syncState}
+            onSyncClick={() => runSync(db, { interactive: true })}
           />
         )}
         {route.screen === 'machines' && (
@@ -4139,8 +4156,7 @@ function App() {
         />
       )}
       {atRoot && !isDesktop && (
-        <TabBar theme={theme} activeTab={activeTab} onSwitch={switchTab}
-          googleUser={googleUser} syncState={syncState} onSyncClick={() => runSync(db, { interactive: true })} />
+        <TabBar theme={theme} activeTab={activeTab} onSwitch={switchTab} />
       )}
     </div>
   );
@@ -4165,6 +4181,14 @@ function SyncMenuButton({ theme, googleUser, syncState, onClick, variant }) {
   const st = syncState?.status;
   const col = syncColor(theme, st);
   const spin = st === 'syncing' ? { animation: 'spin 0.8s linear infinite' } : null;
+  if (variant === 'icon') {
+    return (
+      <button onClick={onClick} disabled={st === 'syncing'} title={st === 'syncing' ? 'Synchronizuji…' : st === 'reconnect' ? 'Ťukni pro připojení' : 'Synchronizovat'}
+        style={{ width: 42, height: 42, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: st === 'reconnect' || st === 'error' ? theme.primarySoft : 'none', border: 'none', color: col }}>
+        <span style={{ display: 'inline-flex', ...spin }}><Icon.Refresh size={19} /></span>
+      </button>
+    );
+  }
   if (variant === 'tab') {
     return (
       <button onClick={onClick} disabled={st === 'syncing'} title={st === 'syncing' ? 'Synchronizuji…' : 'Synchronizovat'}
@@ -4506,7 +4530,7 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
   );
 }
 
-function TabBar({ theme, activeTab, onSwitch, googleUser, syncState, onSyncClick }) {
+function TabBar({ theme, activeTab, onSwitch }) {
   const tabs = [
     { key: 'timer', label: 'Timer', icon: Icon.Clock },
     { key: 'history', label: 'Historie', icon: Icon.Calendar },
@@ -4536,7 +4560,6 @@ function TabBar({ theme, activeTab, onSwitch, googleUser, syncState, onSyncClick
           </button>
         );
       })}
-      <SyncMenuButton theme={theme} googleUser={googleUser} syncState={syncState} onClick={onSyncClick} variant="tab" />
     </div>
   );
 }
