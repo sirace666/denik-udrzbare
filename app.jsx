@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.83';
+const APP_VERSION = '6.84';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -313,12 +313,27 @@ const cloudSync = {
     if (!fb) { onStatus && onStatus('error', 'Cloud služba se nenačetla.'); return; }
     this.db = db;
     this.uid = ownerUid;
+    this._seeded = {};
     const fs = fb.db;
     for (const store of SYNC_STORES) {
       const unsub = fs.collection('users').doc(ownerUid).collection(store).onSnapshot(async (snap) => {
         // I prázdný první snapshot znamená „spojení navázáno" → appka může
         // přepnout stav z „Připojuji…" na „Synchronizováno".
         onStatus && onStatus('online');
+        // Při prvním snapshotu tohohle úložiště nahrajeme do cloudu lokální
+        // záznamy, které tam ještě nejsou — data vytvořená před přihlášením
+        // (nebo na zařízení, které je zadalo dřív) by se jinak nikdy
+        // nesynchronizovala, protože appka po startu jen POSLOUCHÁ.
+        if (!this._seeded[store]) {
+          this._seeded[store] = true;
+          const remoteIds = new Set(snap.docs.map(d => d.id));
+          const locals = await db.getAll(store).catch(() => []);
+          const missing = locals.filter(row => row && row.id != null && !remoteIds.has(String(row.id)));
+          if (missing.length) {
+            console.log('[sync] nahrávám do cloudu chybějící lokální záznamy:', store, missing.length);
+            for (const row of missing) this.pushChange(store, 'put', row).catch(() => {});
+          }
+        }
         let changed = false;
         const chs = snap.docChanges();
         if (chs.length) console.log('[sync] přišlo z cloudu:', store, chs.map(c => c.type + ':' + c.doc.id).join(', '));
