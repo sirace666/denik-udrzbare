@@ -1,8 +1,30 @@
 # Deník údržbáře – appka pro sledování oprav
 
-Appka, která zjednoduší život lidem na opravě. Jednoduchá webová appka (PWA) pro záznam oprav a údržby strojů — časomíra, historie, správa strojů, materiál, fotky. Appka je zdarma, funguje offline a neukládá žádná data mimo tvoje zařízení.
+Appka, která zjednoduší život lidem na opravě. Jednoduchá webová appka (PWA) pro záznam oprav a údržby strojů — časomíra, historie, správa strojů, materiál, fotky. Appka je zdarma a funguje offline. Ve výchozím stavu neukládá žádná data mimo tvoje zařízení; volitelně jde zapnout synchronizaci přes tvůj vlastní Google Disk (viz níže).
 
-**Appka funguje na počítači i na mobilu** – stejná appka, stejná adresa, appka sama pozná, na čem ji otevíráš, a přizpůsobí tomu rozvržení (na PC širší mřížky a postranní menu, na mobilu jednosloupcový layout s lištou dole). Klidně ji používej na obojím zároveň – jen si pamatuj, že data (viz níže) zůstávají oddělená pro každé zařízení/prohlížeč zvlášť.
+**Appka funguje na počítači i na mobilu** – stejná appka, stejná adresa, appka sama pozná, na čem ji otevíráš, a přizpůsobí tomu rozvržení (na PC širší mřížky a postranní menu, na mobilu jednosloupcový layout s lištou dole). Klidně ji používej na obojím zároveň.
+
+## Synchronizace mezi zařízeními
+
+Ve výchozím stavu jsou data každého zařízení oddělená. Když chceš mít stejné záznamy na telefonu i na PC:
+
+1. Nastavení → **Cloud synchronizace** → *Přihlásit se přes Google* → povol přístup.
+2. Appka si ve tvém Google Disku vytvoří jeden soubor (`denik-udrzbare-data.json`) a drží v něm kopii strojů, záznamů oprav, fotek i právě běžící časomíry (spustíš-li timer na jednom zařízení, druhé ho ukáže taky).
+3. Na druhém zařízení uděláš totéž se stejným Google účtem — data se stáhnou.
+
+Detaily:
+
+- **Slévání, ne přepis.** Při synchronizaci se změny z obou stran spojí (třícestný merge). Úprava na jednom zařízení nepřepíše úpravu na druhém; při skutečné kolizi (stejný záznam upravený na obou zařízeních bez synchronizace mezitím) vyhrává verze ze zařízení, na kterém zrovna synchronizuješ.
+- **První synchronizace = sjednocení.** Pokud máš data na obou zařízeních už teď, po prvním sladění bude na obou vše dohromady. Stejnou opravu zadanou ručně na obou zařízeních appka nepozná jako jednu → vznikne duplicita, kterou pak smažeš ručně (smazání se synchronizuje).
+- **Automaticky / ručně.** Zapnutá automatika (výchozí):
+  - nahraje změny na Disk pár sekund po každé úpravě,
+  - stáhne novinky při otevření appky a při každém návratu do ní (odemčení telefonu, přepnutí zpět na kartu),
+  - dokud je appka otevřená, každých ~90 s se navíc podívá, jestli soubor neupravilo jiné zařízení, a když ano, stáhne ho (kontroluje se jen čas úpravy, ne celý soubor — takže „appka běžící na PC" pochytí změny z mobilu sama).
+
+  Vypnutá automatika → synchronizuje se jen tlačítkem *Obnovit* (ikona v menu vlevo), *Sync* (spodní lišta na mobilu) nebo *Synchronizovat teď* v Nastavení.
+- **Oprávnění.** Appka žádá scope `drive.file` — vidí výhradně svůj vlastní soubor, k ničemu jinému na Disku přístup nemá. Nemá vlastní server, data nikam jinam neposílá. Přístup odebereš na [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+- **Přihlášení po obnovení stránky.** Na Chrome/Edge se token obnoví tiše. Brave/Firefox blokují tichou cestu → po refreshi krátce blikne přihlašovací okno Google (zavře se samo), nebo v Brave sniž Shields pro adresu appky.
+- **Reset.** Nastavení → *Resetovat vše* smaže data v daném zařízení; při zapnuté synchronizaci si zařízení při dalším sladění stáhne společný stav z Disku (reset se do cloudu ani na jiná zařízení nepropaguje).
 
 ## Co appka umí
 
@@ -19,8 +41,10 @@ Appka, která zjednoduší život lidem na opravě. Jednoduchá webová appka (P
 - **Vlastní time picker** – appka nepoužívá systémový výběr času (ten na mobilu přetékal mimo obrazovku), ale vlastní ovládání s minutami po 5, ať je zadávání rychlé a konzistentní.
 - **Automatické zaokrouhlení** – čas se zaokrouhluje na 5 minut, nová oprava na dnešní den se předvyplní aktuálním časem.
 - **Záloha a obnova dat** – export do souboru a import zpátky, přímo v appce (Nastavení).
+- **Cloud synchronizace (volitelná)** – po přihlášení přes Google se stroje, záznamy i fotky drží v jednom souboru na tvém Google Disku a slévají se mezi zařízeními (třícestný merge – úprava na jednom zařízení nepřepíše úpravu na druhém). Appka používá oprávnění `drive.file`, tzn. vidí výhradně svůj vlastní soubor, k ničemu jinému na Disku nemá přístup. Bez přihlášení appka funguje dál čistě lokálně.
+- **Reset dat** – v Nastavení tlačítko „Resetovat vše" smaže stroje, záznamy i kategorie v daném zařízení. Když běží Cloud synchronizace, zařízení si při dalším sladění stáhne společný stav z Disku (reset se do cloudu ani na jiná zařízení nepropaguje).
 - **Světlý/tmavý/systémový vzhled** – appka se přizpůsobí nastavení telefonu, nebo jde vybrat ručně.
-- **Přizpůsobení širokým obrazovkám** – na monitoru appka automaticky přepne na desktopové rozvržení: postranní menu vlevo místo spodní lišty, širší mřížky u Strojů a Galerie (víc sloupců), postranní panel s dnešními opravami na Timeru, a přiměřeně omezená šířka formulářů a detailů, ať se nenatahují přes celou obrazovku. Panel s dnešními opravami jde zasunout/otevřít úchytem na jeho levém okraji, roztáhnout tažením do libovolné šířky, nebo přepnout na automatické skrývání (špendlík) – pak se sám vysune, jen když na něj najedeš myší. Na telefonu zůstává appka beze změny.
+- **Přizpůsobení širokým obrazovkám** – na monitoru appka automaticky přepne na desktopové rozvržení: postranní menu vlevo místo spodní lišty, širší mřížky u Strojů a Galerie (víc sloupců), postranní panel s dnešními opravami na Timeru, a přiměřeně omezená šířka formulářů a detailů, ať se nenatahují přes celou obrazovku. Panel s dnešními opravami jde zasunout/otevřít úchytem na jeho levém okraji, roztáhnout tažením do libovolné šířky, nebo ikonou oka přepnout mezi „zůstává vidět" (oko aktivní) a automatickým skrýváním (oko vypnuté – panel se vysune, jen když na něj najedeš myší). Na telefonu zůstává appka beze změny.
 - **Funguje offline** – vše se ukládá lokálně v telefonu (IndexedDB), žádný účet, žádný server, žádný internet potřeba pro běžný provoz.
 
 ## Soubory
@@ -30,6 +54,7 @@ index.html       – vstupní stránka
 app.jsx          – veškerá logika appky (jeden soubor, snadno upravitelný)
 manifest.json    – definice PWA (název, ikona, barvy)
 sw.js            – service worker (offline cache)
+privacy.html     – zásady ochrany soukromí (odkaz z Google přihlašovací obrazovky)
 icon-192.png     – ikona appky (malá)
 icon-512.png     – ikona appky (velká)
 ```
@@ -37,7 +62,7 @@ icon-512.png     – ikona appky (velká)
 ## Nasazení na GitHub Pages
 
 1. Vytvoř nový repozitář na GitHubu (např. `denik-udrzbare`), může být i public bez obav – appka neposílá žádná data nikam ven.
-2. Nahraj do něj všech 6 souborů výše (do kořene repozitáře, ne do podsložky) a taky `.nojekyll` (prázdný soubor, aby GitHub Pages neignoroval soubory se začátečním podtržítkem/tečkou).
+2. Nahraj do něj všech 7 souborů výše (do kořene repozitáře, ne do podsložky) a taky `.nojekyll` (prázdný soubor, aby GitHub Pages neignoroval soubory se začátečním podtržítkem/tečkou).
 3. V nastavení repozitáře: **Settings → Pages → Source: Deploy from branch → Branch: main → / (root)**.
 4. Za chvíli appka poběží na `https://tvoje-jmeno.github.io/denik-udrzbare/`.
 
@@ -71,11 +96,11 @@ Appka nainstalovaná na ploše (PC i mobil) se pak chová jako běžná aplikace
 
 ## Důležité – kam mizí data
 
-Data (stroje, záznamy oprav, fotky) se ukládají **jen v tomto konkrétním zařízení a jen v tomto konkrétním prohlížeči**. To znamená:
+Bez zapnuté Cloud synchronizace se data (stroje, záznamy oprav, fotky) ukládají **jen v tomto konkrétním zařízení a jen v tomto konkrétním prohlížeči**. To znamená:
 
 - Když appku odinstaluješ nebo vymažeš data prohlížeče, data zmizí. Appka má v Nastavení **export/import zálohy** – vyplatí se ji občas udělat.
-- Data z telefonu se **automaticky nezobrazí** na počítači ani naopak – i když appku otevřeš na obou, každé zařízení má svoje vlastní, oddělené záznamy, dokud je ručně nepřeneseš přes export/import.
-- Pokud budeš chtít v budoucnu vidět historii i odjinud (PC, jiný telefon) automaticky a najednou, řešením by bylo napojit appku na cloudové úložiště (např. Firebase) – ale to už je větší krok, ne první.
+- Data z telefonu se **automaticky nezobrazí** na počítači ani naopak, dokud je ručně nepřeneseš přes export/import — nebo dokud nezapneš **Cloud synchronizaci** (viz sekce nahoře), která to řeší za tebe.
+- I se zapnutou synchronizací zůstává lokální kopie v každém zařízení plnohodnotná a appka funguje offline; synchronizace ji jen průběžně slévá s ostatními zařízeními přes tvůj Google Disk.
 
 ## Aktualizace appky
 
@@ -89,5 +114,4 @@ V appce (Nastavení → „Podpoř vývoj appky") je odkaz na dobrovolný přís
 
 - Export měsíce/směny do CSV nebo PDF pro reporting
 - Historie oprav per stroj (kolikrát byl v EM, celkový čas)
-- Cloudová synchronizace mezi zařízeními
 - Zamykání obrazovky proti náhodnému stisku při práci v kapse

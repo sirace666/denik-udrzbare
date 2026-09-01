@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.64';
+const APP_VERSION = '6.73';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -81,6 +81,309 @@ function getDB() {
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
+// ============================================================
+// CLOUD SYNCHRONIZACE — Google Drive (volitelná)
+// ------------------------------------------------------------
+// Appka zůstává offline-first: vše se ukládá lokálně do IndexedDB.
+// Když si uživatel zapne synchronizaci, appka navíc drží jednu kopii
+// dat (stroje + záznamy + kategorie, fotky jsou uvnitř záznamů jako
+// data-URL) v souboru na jeho Google Disku a slévá změny mezi zařízeními
+// tří­cestným merge oproti "shadow" stavu z poslední synchronizace —
+// takže úprava na jednom zařízení nepřepíše úpravu na druhém.
+// Oprávnění drive.file = appka vidí jen soubor, který sama vytvořila.
+// ============================================================
+const GOOGLE_CLIENT_ID = '74515572136-vo9crrfcenfu658oe9fvc03u9pbm4bu2.apps.googleusercontent.com';
+const GOOGLE_SCOPE = 'openid email https://www.googleapis.com/auth/drive.file';
+const DRIVE_FILE_NAME = 'denik-udrzbare-data.json';
+// activeSession = běžící časomíra (jeden záznam s id 'active'). Synchronizuje se
+// taky, ať se spuštěný/zastavený timer projeví i na druhém zařízení.
+const SYNC_STORES = ['machines', 'records', 'categories', 'activeSession'];
+
+function loadGis() {
+  if (window.__gisPromise) return window.__gisPromise;
+  window.__gisPromise = new Promise((resolve, reject) => {
+    if (window.google?.accounts?.oauth2) { resolve(); return; }
+    const s = document.createElement('script');
+    s.src = 'https://accounts.google.com/gsi/client';
+    s.async = true; s.defer = true;
+    s.onload = () => resolve();
+    s.onerror = () => { window.__gisPromise = null; reject(new Error('Nepodařilo se načíst přihlášení Google.')); };
+    document.head.appendChild(s);
+  });
+  return window.__gisPromise;
+}
+
+// Chyba, kterou appka nezobrazuje jako "selhalo" — jen si vyžádá tiché
+// znovupřipojení přes tlačítko (token po refreshi stránky v paměti není).
+const RECONNECT_ERROR = 'RECONNECT';
+
+const googleAuth = {
+  _token: null,
+  _expiry: 0,
+  _client: null,
+  email: null,
+
+  async _ensureClient() {
+    await loadGis();
+    if (!this._client) {
+      this._client = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: GOOGLE_SCOPE,
+        callback: () => {},
+      });
+    }
+  },
+
+  _requestToken(prompt) {
+    return new Promise((resolve, reject) => {
+      this._client.callback = (resp) => {
+        if (resp && resp.access_token) {
+          this._token = resp.access_token;
+          this._expiry = Date.now() + (Number(resp.expires_in || 3600) - 60) * 1000;
+          resolve(resp.access_token);
+        } else {
+          reject(new Error(resp?.error || 'Přihlášení se nezdařilo.'));
+        }
+      };
+      this._client.error_callback = (err) => reject(new Error(err?.type || 'Přihlášení se nezdařilo.'));
+      const cfg = { prompt };
+      if (this.email) cfg.hint = this.email; // GIS pak nemusí ukazovat výběr účtu
+      try { this._client.requestAccessToken(cfg); }
+      catch (e) { reject(e); }
+    });
+  },
+
+  // Interaktivní přihlášení / znovupřipojení. prompt '' = souhlas jen poprvé,
+  // potom tiché (žádné nucené consent okno při každém připojení).
+  async signIn() {
+    await this._ensureClient();
+    await this._requestToken('');
+    await this._fetchEmail();
+    return this.email;
+  },
+
+  // Token. Po refreshi stránky žádný token v paměti není. Vždy se NEJDŘÍV zkusí
+  // tiché vydání ('none') z existující Google session — na Chrome projde bez okna.
+  // Když to prohlížeč nedovolí (Brave/Firefox blokují background iframe) a je to
+  // interaktivní akce (klik uživatele), teprve pak se otevře přihlašovací okno.
+  // Jinak RECONNECT (appka jen změní barvu ikony, nic nevyskočí).
+  async getToken(interactive = false) {
+    await this._ensureClient();
+    if (this._token && Date.now() < this._expiry) return this._token;
+    try {
+      return await this._requestToken('none');
+    } catch (e) {
+      if (!interactive) throw new Error(RECONNECT_ERROR);
+    }
+    return this._requestToken('');
+  },
+
+  async _fetchEmail() {
+    try {
+      const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: 'Bearer ' + this._token },
+      });
+      if (r.ok) { const j = await r.json(); this.email = j.email || null; }
+    } catch { /* e-mail není kritický */ }
+  },
+
+  signOut() {
+    if (this._token && window.google?.accounts?.oauth2) {
+      try { window.google.accounts.oauth2.revoke(this._token, () => {}); } catch {}
+    }
+    this._token = null; this._expiry = 0; this.email = null;
+  },
+};
+
+async function driveFetch(path, opts = {}, _retry = true) {
+  const token = await googleAuth.getToken();
+  const r = await fetch(path, {
+    ...opts,
+    headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + token },
+  });
+  if (r.status === 401 && _retry) {
+    googleAuth._token = null; googleAuth._expiry = 0;
+    return driveFetch(path, opts, false);
+  }
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    throw new Error('Google Disk: ' + r.status + ' ' + txt.slice(0, 120));
+  }
+  return r;
+}
+
+async function driveFindDataFile() {
+  const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+  const r = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,modifiedTime)&spaces=drive`);
+  const j = await r.json();
+  return j.files && j.files[0] ? j.files[0].id : null;
+}
+
+async function driveDownloadJson(fileId) {
+  const r = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+  return r.json();
+}
+
+// Jen metadata — čas poslední úpravy souboru. Levný dotaz pro polling.
+async function driveGetModifiedTime(fileId) {
+  const r = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=modifiedTime`);
+  const j = await r.json();
+  return j.modifiedTime || null;
+}
+
+// Vrací { id, modifiedTime } nahraného souboru.
+async function driveUploadJson(fileId, obj) {
+  const body = JSON.stringify(obj);
+  if (fileId) {
+    const r = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=id,modifiedTime`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    const j = await r.json();
+    return { id: fileId, modifiedTime: j.modifiedTime || null };
+  }
+  const boundary = 'denik' + Math.random().toString(36).slice(2);
+  const meta = { name: DRIVE_FILE_NAME, mimeType: 'application/json' };
+  const multipart =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
+  const r = await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime', {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body: multipart,
+  });
+  const j = await r.json();
+  return { id: j.id, modifiedTime: j.modifiedTime || null };
+}
+
+function stableStringify(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+}
+function hashEntity(e) {
+  const s = stableStringify(e);
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return h.toString(36);
+}
+function indexById(arr) {
+  const m = {};
+  for (const e of (arr || [])) if (e && e.id != null) m[e.id] = e;
+  return m;
+}
+
+// Trojcestný merge jednoho úložiště podle id.
+// L = lokální, R = vzdálené, S = shadow (stav po poslední synchronizaci).
+// Vrací { merged: {id:entity}, changedLocal: bool }.
+function mergeStore(localArr, remoteArr, shadowHashes) {
+  const L = indexById(localArr);
+  const R = indexById(remoteArr);
+  const S = shadowHashes || {};
+  const ids = new Set([...Object.keys(L), ...Object.keys(R), ...Object.keys(S)]);
+  const merged = {};
+  let changedLocal = false;   // výsledek se liší od toho, co bylo lokálně → přepsat IndexedDB
+  let changedRemote = false;  // výsledek se liší od toho, co je na Disku → nahrát
+  let conflicts = 0;
+  for (const id of ids) {
+    const l = L[id], r = R[id];
+    const lh = l ? hashEntity(l) : null;
+    const rh = r ? hashEntity(r) : null;
+    const sh = S[id] || null;
+    if (lh === rh) { if (l) merged[id] = l; continue; }      // shodné (nebo obě smazané)
+    const lChanged = lh !== sh;
+    const rChanged = rh !== sh;
+    let pick;
+    if (lChanged && !rChanged) pick = l;                      // změna jen lokálně
+    else if (rChanged && !lChanged) pick = r;                 // změna jen vzdáleně
+    else { pick = l; conflicts++; }                           // obojí → lokální vyhrává
+    if (pick) merged[id] = pick;
+    const ph = pick ? hashEntity(pick) : null;
+    if (ph !== lh) changedLocal = true;
+    if (ph !== rh) changedRemote = true;
+  }
+  return { merged, changedLocal, changedRemote, conflicts };
+}
+
+// Hlavní synchronizace. db = wrapper z getDB(). Vrací shrnutí pro UI.
+async function syncNow(db) {
+  const shadowRec = (await db.get('settings', 'syncShadow').catch(() => null)) || { id: 'syncShadow', fileId: null, stores: {} };
+  let fileId = shadowRec.fileId || null;
+  if (!fileId) fileId = await driveFindDataFile();
+
+  let remote = { machines: [], records: [], categories: [] };
+  if (fileId) {
+    try { remote = await driveDownloadJson(fileId); }
+    catch { fileId = await driveFindDataFile(); if (fileId) remote = await driveDownloadJson(fileId); }
+  }
+
+  const local = {};
+  for (const s of SYNC_STORES) local[s] = await db.getAll(s);
+
+  const newShadowStores = {};
+  const finalArrays = {};
+  let anyLocalChange = false;
+  let anyRemoteChange = false;
+  let totalConflicts = 0;
+
+  for (const s of SYNC_STORES) {
+    const { merged, changedLocal, changedRemote, conflicts } = mergeStore(local[s], remote[s], shadowRec.stores[s]);
+    if (changedLocal) anyLocalChange = true;
+    if (changedRemote) anyRemoteChange = true;
+    totalConflicts += conflicts;
+
+    const localIdx = indexById(local[s]);
+    // zápis změn do IndexedDB
+    for (const id of Object.keys(merged)) {
+      if (hashEntity(merged[id]) !== (localIdx[id] ? hashEntity(localIdx[id]) : null)) {
+        await db.put(s, merged[id]);
+      }
+    }
+    for (const id of Object.keys(localIdx)) {
+      if (!(id in merged)) await db.delete(s, id);
+    }
+
+    const arr = Object.values(merged);
+    finalArrays[s] = arr;
+    const hashes = {};
+    for (const e of arr) hashes[e.id] = hashEntity(e);
+    newShadowStores[s] = hashes;
+  }
+
+  // Na Disk nahrajeme jen když se sloučený stav liší od toho, co tam je —
+  // jinak by každý "prázdný" sync (návrat do appky, polling) zbytečně
+  // přepsal soubor, posunul čas úpravy a rozjel ping-pong mezi zařízeními.
+  let finalId = fileId;
+  let finalModified = shadowRec.remoteModified || null;
+  if (anyRemoteChange || !fileId) {
+    const payload = { app: 'denik-udrzbare', version: APP_VERSION, syncedAt: new Date().toISOString(), ...finalArrays };
+    const up = await driveUploadJson(fileId, payload);
+    finalId = up.id;
+    finalModified = up.modifiedTime;
+  } else if (fileId) {
+    // stav se neměnil — jen si poznamenáme aktuální čas úpravy, ať polling
+    // příště nehlásí faleš­ný poplach kvůli úpravě z jiného (už staženého) zdroje
+    try { finalModified = await driveGetModifiedTime(fileId); } catch {}
+  }
+
+  await db.put('settings', { id: 'syncShadow', fileId: finalId, stores: newShadowStores, remoteModified: finalModified });
+  await db.put('settings', { id: 'syncMeta', lastSyncAt: Date.now(), email: googleAuth.email });
+
+  return { localChanged: anyLocalChange, conflicts: totalConflicts };
+}
+
+// Levná kontrola, jestli soubor na Disku upravilo jiné zařízení od naší
+// poslední synchronizace. Stáhne jen metadata (čas úpravy), ne celý soubor.
+async function remoteHasNewData(db) {
+  const shadow = await db.get('settings', 'syncShadow').catch(() => null);
+  if (!shadow || !shadow.fileId || !shadow.remoteModified) return false;
+  try {
+    const mt = await driveGetModifiedTime(shadow.fileId);
+    return !!mt && mt !== shadow.remoteModified;
+  } catch { return false; }
+}
+
 function pad(n) { return n.toString().padStart(2, '0'); }
 
 function fmtDuration(ms) {
@@ -112,6 +415,18 @@ function fmtDurationShort(ms) {
 function fmtTime(ts) {
   const d = new Date(ts);
   return `${d.getHours()}:${pad(d.getMinutes())}`;
+}
+
+// Relativní čas poslední synchronizace pro Nastavení ("před 3 min", "dnes 14:20"…).
+function fmtSyncTime(ts) {
+  if (!ts) return 'nikdy';
+  const diff = Date.now() - ts;
+  if (diff < 60000) return 'právě teď';
+  if (diff < 3600000) return `před ${Math.round(diff / 60000)} min`;
+  const d = new Date(ts);
+  const today = fmtDateKey(Date.now());
+  if (fmtDateKey(ts) === today) return `dnes ${d.getHours()}:${pad(d.getMinutes())}`;
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}. ${d.getHours()}:${pad(d.getMinutes())}`;
 }
 
 // Rozdělí label typu opravy na "prefix" (CM/EM, appka ho zobrazí jako malý
@@ -240,10 +555,13 @@ const Icon = {
   Bar: phosphorIcon('chart-bar'),
   Download: phosphorIcon('download-simple'),
   Upload: phosphorIcon('upload-simple'),
+  Cloud: phosphorIcon('cloud'),
+  Refresh: phosphorIcon('arrows-clockwise'),
   Copy: phosphorIcon('copy'),
   ShareIcon: phosphorIcon('share-network'),
   House: phosphorIcon('house'),
   Pin: phosphorIcon('push-pin'),
+  Eye: phosphorIcon('eye'),
   // Sada ikon pro kategorie strojů — dostatečně různorodá, ať jde vizuálně
   // odlišit různé typy vybavení/oblastí (elektro, hydraulika, doprava, ...).
   CatGear: phosphorIcon('gear-six'),
@@ -757,7 +1075,8 @@ function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings,
   );
 }
 
-function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored }) {
+function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored, googleUser, syncAuto, syncState, onGoogleSignIn, onGoogleSignOut, onSetSyncAuto, onSyncNow, onResetAll }) {
+  const [confirmReset, setConfirmReset] = useState(false);
   const options = [
     { key: 'light', label: 'Světlý', icon: Icon.Sun },
     { key: 'dark', label: 'Tmavý', icon: Icon.Moon },
@@ -869,6 +1188,72 @@ function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored }) {
           <input ref={fileInputRef} type="file" accept="application/json" style={{ display: 'none' }} onChange={onFileSelected} />
         </Card>
 
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Cloud synchronizace</div>
+        <Card theme={theme} style={{ padding: '16px 18px', marginBottom: 24 }}>
+          <div style={{ fontSize: 13, color: theme.textDim, lineHeight: 1.5, marginBottom: 14 }}>
+            {googleUser
+              ? 'Data (stroje, záznamy, fotky) se drží ve tvém Google Disku a slévají se mezi zařízeními.'
+              : 'Přihlas se přes Google a data se budou přenášet mezi tvými zařízeními přes tvůj Google Disk. Appka vidí jen svůj vlastní soubor, k ničemu jinému na Disku nemá přístup.'}
+          </div>
+
+          {!googleUser ? (
+            <button onClick={onGoogleSignIn} disabled={syncState.status === 'syncing'}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`, borderRadius: 12, padding: '12px', color: theme.text, fontSize: 13.5, fontWeight: 600, opacity: syncState.status === 'syncing' ? 0.6 : 1 }}>
+              <Icon.Cloud size={16} />
+              <span>Přihlásit se přes Google</span>
+            </button>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: theme.text, marginBottom: 12 }}>
+                <Icon.Cloud size={16} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{googleUser.email || 'Přihlášen'}</span>
+              </div>
+
+              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13, color: theme.textDim, marginBottom: 12 }}>
+                <span>Synchronizovat automaticky</span>
+                <input type="checkbox" checked={!!syncAuto} onChange={e => onSetSyncAuto(e.target.checked)} style={{ width: 18, height: 18, accentColor: theme.primary }} />
+              </label>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button onClick={onSyncNow} disabled={syncState.status === 'syncing'}
+                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: syncState.status === 'reconnect' ? theme.primarySoft : theme.surfaceElevated, border: `1px solid ${syncState.status === 'reconnect' ? theme.primary : theme.borderStrong}`, borderRadius: 12, padding: '12px', color: syncState.status === 'reconnect' ? theme.primary : theme.text, fontSize: 13.5, fontWeight: 600, opacity: syncState.status === 'syncing' ? 0.6 : 1 }}>
+                  <Icon.Refresh size={16} />
+                  <span>{syncState.status === 'syncing' ? 'Synchronizuji…' : 'Synchronizovat teď'}</span>
+                </button>
+                <button onClick={onGoogleSignOut}
+                  style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`, borderRadius: 12, padding: '12px 14px', color: theme.textDim, fontSize: 13.5, fontWeight: 600 }}>
+                  Odhlásit
+                </button>
+              </div>
+
+              <div style={{ fontSize: 12, color: syncState.status === 'error' ? theme.em : theme.textFaint, marginTop: 10, lineHeight: 1.4 }}>
+                {syncState.msg
+                  || (syncState.status === 'reconnect' && 'Klikni na „Synchronizovat teď" pro obnovení připojení k Google.')
+                  || (syncState.status === 'error' && 'Synchronizace se nezdařila.')
+                  || (syncState.lastSyncAt ? `Naposledy synchronizováno ${fmtSyncTime(syncState.lastSyncAt)}` : 'Zatím nesynchronizováno')}
+              </div>
+              <div style={{ fontSize: 11.5, color: theme.textFaint, marginTop: 8, lineHeight: 1.45 }}>
+                {syncAuto
+                  ? 'Automaticky: appka nahraje změny na Disk pár sekund po každé úpravě a stáhne novinky při otevření.'
+                  : 'Ručně: měníš-li data, klikni na „Synchronizovat teď", jinak se na Disk nic nenahraje.'}
+              </div>
+            </>
+          )}
+        </Card>
+
+        <div style={{ ...S.fieldLabel, color: theme.textFaint }}>Reset</div>
+        <Card theme={theme} style={{ padding: '16px 18px', marginBottom: 24 }}>
+          <div style={{ fontSize: 13, color: theme.textDim, lineHeight: 1.5, marginBottom: 14 }}>
+            Smaže všechny stroje, záznamy oprav a kategorie v tomto zařízení.
+            {googleUser ? ' Synchronizace zůstane přihlášená — při dalším sladění se stáhne společný stav z Google Disku (z ostatních zařízení).' : ' Tuto akci nelze vrátit.'}
+          </div>
+          <button onClick={() => setConfirmReset(true)}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: theme.emSoft, border: `1px solid ${theme.em}55`, borderRadius: 12, padding: '12px', color: theme.em, fontSize: 13.5, fontWeight: 700 }}>
+            <Icon.Trash size={16} />
+            <span>Resetovat vše</span>
+          </button>
+        </Card>
+
         {status && (
           <div style={{
             fontSize: 12.5, color: status.type === 'error' ? theme.em : theme.cm,
@@ -884,7 +1269,7 @@ function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored }) {
         <Card theme={theme} style={{ padding: '16px 18px' }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: theme.text, marginBottom: 3 }}>Deník údržbáře</div>
           <div style={{ fontSize: 13, color: theme.textFaint }}>Verze {APP_VERSION}</div>
-          <div style={{ fontSize: 12.5, color: theme.textFaint, marginTop: 8, lineHeight: 1.5 }}>Data se ukládají pouze v tomto zařízení.</div>
+          <div style={{ fontSize: 12.5, color: theme.textFaint, marginTop: 8, lineHeight: 1.5 }}>{googleUser ? 'Data se ukládají v tomto zařízení a synchronizují se přes tvůj Google Disk.' : 'Data se ukládají pouze v tomto zařízení.'}</div>
         </Card>
 
         <a
@@ -903,6 +1288,21 @@ function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored }) {
 
         <div style={{ height: 24 }} />
       </div>
+
+      {confirmReset && (
+        <div onClick={() => setConfirmReset(false)} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 50 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: theme.surfaceSolid, border: `1px solid ${theme.borderStrong}`, borderRadius: 20, padding: 22, width: '100%', maxWidth: 320, boxShadow: theme.shadow }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: theme.text, marginBottom: 4 }}>Resetovat vše?</div>
+            <div style={{ fontSize: 13, color: theme.textDim, marginBottom: 18, lineHeight: 1.5 }}>
+              Smažou se všechny stroje, záznamy oprav a kategorie v tomto zařízení{googleUser ? '. Synchronizace zůstane přihlášená a při dalším sladění se stáhne společný stav z Google Disku.' : '. Tato akce se nedá vrátit.'}
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setConfirmReset(false)} style={{ flex: 1, background: theme.surfaceElevated, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '12px', color: theme.text, fontWeight: 600 }}>Zrušit</button>
+              <button onClick={() => { setConfirmReset(false); onResetAll?.(); setStatus({ type: 'success', text: 'Data byla vymazána.' }); }} style={{ flex: 1, background: theme.em, border: 'none', borderRadius: 12, padding: '12px', color: '#fff', fontWeight: 700 }}>Resetovat</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirmImport && (
         <div onClick={() => setConfirmImport(null)} style={{ position: 'fixed', inset: 0, background: theme.overlay, backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, zIndex: 50 }}>
@@ -3155,6 +3555,11 @@ function App() {
   const [refreshTick, setRefreshTick] = useState(0);
   const [galleryColumns, setGalleryColumns] = useState(3);
   const [machineColumns, setMachineColumns] = useState(3);
+  const [googleUser, setGoogleUser] = useState(null); // { email } nebo null
+  const [syncAuto, setSyncAuto] = useState(true);
+  const [syncState, setSyncState] = useState({ status: 'idle', lastSyncAt: null, msg: null }); // idle|syncing|ok|error
+  const syncTimerRef = useRef(null);
+  const syncingRef = useRef(false);
   const stackRef = useRef(stack);
   stackRef.current = stack;
   const activeTabRef = useRef(activeTab);
@@ -3181,8 +3586,135 @@ function App() {
       const wideDefault = window.innerWidth >= DESKTOP_BREAKPOINT ? 5 : 3;
       setGalleryColumns(gallerySettings?.columns || wideDefault);
       setMachineColumns(machineSettings?.columns || wideDefault);
+
+      const gUser = await database.get('settings', 'googleUser').catch(() => null);
+      const syncCfg = await database.get('settings', 'syncConfig').catch(() => null);
+      const syncMeta = await database.get('settings', 'syncMeta').catch(() => null);
+      if (syncCfg && typeof syncCfg.auto === 'boolean') setSyncAuto(syncCfg.auto);
+      if (syncMeta?.lastSyncAt) setSyncState(st => ({ ...st, lastSyncAt: syncMeta.lastSyncAt }));
+      if (gUser?.email) {
+        setGoogleUser({ email: gUser.email });
+        googleAuth.email = gUser.email;
+        // po startu appky zkusíme tichou synchronizaci (bez okna); když token
+        // vypršel a je potřeba souhlas, jen to tiše selže a uživatel klikne
+        // "Synchronizovat teď" ručně.
+        if (!syncCfg || syncCfg.auto !== false) runSync(database, { silent: true });
+      }
     });
   }, []);
+
+  // Jádro synchronizace obalené o stavové hlášky a ochranu proti souběhu.
+  // interactive = smí se otevřít okno pro (znovu)připojení účtu.
+  const runSync = useCallback(async (database, { silent = false, interactive = false } = {}) => {
+    const d = database || db;
+    if (!d || syncingRef.current) return;
+    syncingRef.current = true;
+    setSyncState(st => ({ ...st, status: 'syncing', msg: null }));
+    try {
+      await googleAuth.getToken(interactive);
+      const res = await syncNow(d);
+      const now = Date.now();
+      setSyncState({ status: 'ok', lastSyncAt: now, msg: res.conflicts ? `Sloučeno (${res.conflicts}× souběžná úprava — ponechána zdejší verze).` : null });
+      if (res.localChanged) {
+        setRefreshTick(t => t + 1);
+        const sessions = await d.getAll('activeSession');
+        setActiveSession(sessions[0] || null);
+      }
+    } catch (e) {
+      if (e?.message === RECONNECT_ERROR) {
+        // Token po refreshi chybí a tiché obnovení nešlo — jen nabídnout tlačítko.
+        setSyncState(st => ({ ...st, status: 'reconnect', msg: null }));
+      } else {
+        setSyncState(st => ({ ...st, status: 'error', msg: silent ? null : (e?.message || 'Synchronizace se nezdařila.') }));
+      }
+    } finally {
+      syncingRef.current = false;
+    }
+  }, [db]);
+
+  const handleGoogleSignIn = useCallback(async () => {
+    setSyncState(st => ({ ...st, status: 'syncing', msg: null }));
+    try {
+      const email = await googleAuth.signIn();
+      setGoogleUser({ email });
+      if (db) await db.put('settings', { id: 'googleUser', email });
+      await runSync(db, {});
+    } catch (e) {
+      setSyncState(st => ({ ...st, status: 'error', msg: e?.message || 'Přihlášení se nezdařilo.' }));
+    }
+  }, [db, runSync]);
+
+  const handleGoogleSignOut = useCallback(async () => {
+    googleAuth.signOut();
+    setGoogleUser(null);
+    if (db) {
+      await db.delete('settings', 'googleUser').catch(() => {});
+      await db.delete('settings', 'syncShadow').catch(() => {});
+    }
+    setSyncState({ status: 'idle', lastSyncAt: null, msg: null });
+  }, [db]);
+
+  const handleSetSyncAuto = useCallback(async (val) => {
+    setSyncAuto(val);
+    if (db) await db.put('settings', { id: 'syncConfig', auto: val });
+  }, [db]);
+
+  // Kompletní reset dat tohoto zařízení (stroje, záznamy, kategorie, běžící
+  // časomíra). Vzhled a přihlášení zůstávají. Když je zapnutá synchronizace,
+  // smaže se i "shadow" — příští synchronizace pak proběhne jako čisté stažení
+  // z Disku (tj. appka NEpropaguje toto smazání do cloudu ani na jiná zařízení),
+  // takže zařízení se jen "vrátí do hry" a natáhne si společný stav.
+  const handleResetAll = useCallback(async () => {
+    if (!db) return;
+    for (const s of ['machines', 'records', 'categories', 'activeSession']) {
+      const all = await db.getAll(s).catch(() => []);
+      for (const e of all) await db.delete(s, e.id);
+    }
+    await db.delete('settings', 'syncShadow').catch(() => {});
+    setActiveSession(null);
+    setRefreshTick(t => t + 1);
+    if (googleUser && syncAuto) runSync(db, { silent: true });
+  }, [db, googleUser, syncAuto, runSync]);
+
+  // Auto-synchronizace po lokální změně dat (debounce), když je uživatel přihlášený.
+  useEffect(() => {
+    if (!db || !googleUser || !syncAuto) return;
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => { runSync(db, { silent: true }); }, 4000);
+    return () => { if (syncTimerRef.current) clearTimeout(syncTimerRef.current); };
+  }, [refreshTick, db, googleUser, syncAuto, runSync]);
+
+  // Stáhne novinky z Disku, ale JEN když soubor mezitím upravilo jiné zařízení
+  // (levný dotaz na čas úpravy, ne celý soubor). Používá se pro návrat do appky
+  // i pro polling — ať se velký soubor s fotkami zbytečně nestahuje pořád.
+  const pullIfRemoteChanged = useCallback(async () => {
+    if (!db || syncingRef.current) return;
+    try { if (await remoteHasNewData(db)) runSync(db, { silent: true }); } catch {}
+  }, [db, runSync]);
+
+  // Sync při návratu do appky (odemčení telefonu, přepnutí zpět na kartu).
+  useEffect(() => {
+    if (!db || !googleUser || !syncAuto) return;
+    const onVisible = () => { if (document.visibilityState === 'visible') pullIfRemoteChanged(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [db, googleUser, syncAuto, pullIfRemoteChanged]);
+
+  // Lehký polling, dokud je appka otevřená a viditelná: každých 90 s se zeptá
+  // jen na čas úpravy souboru a plný sync spustí, jen když ho změnilo jiné
+  // zařízení. Řeší "appka běží na PC, měním na mobilu". Náklady: drobný dotaz
+  // za 90 s, zdarma.
+  useEffect(() => {
+    if (!db || !googleUser || !syncAuto) return;
+    const iv = setInterval(() => {
+      if (document.visibilityState === 'visible') pullIfRemoteChanged();
+    }, 90000);
+    return () => clearInterval(iv);
+  }, [db, googleUser, syncAuto, pullIfRemoteChanged]);
 
   useEffect(() => {
     // Appka potřebuje aspoň dvě vrstvy v historii prohlížeče hned od startu,
@@ -3272,6 +3804,7 @@ function App() {
     const session = { id: 'active', startTime: Date.now(), photos: [] };
     await db.put('activeSession', session);
     setActiveSession(session);
+    setRefreshTick(t => t + 1); // ať se spuštěná časomíra propíše i na druhé zařízení
   }
 
   // Uloží libovolné pole "rozpracované" opravy (stroj, typ, WO, závada,
@@ -3341,6 +3874,7 @@ function App() {
     setPendingSession(draft);
     await db.delete('activeSession', 'active');
     setActiveSession(null);
+    setRefreshTick(t => t + 1); // ať zastavená časomíra zmizí i na druhém zařízení
     // Stroj zadaný už za běhu timeru appka nenechá vybírat znovu — jde
     // rovnou do zbytku formuláře, předvyplněného vším, co bylo zadané živě.
     if (activeSession.machineId) {
@@ -3443,7 +3977,8 @@ function App() {
   return (
     <div style={{ height: '100vh', background: theme.bg, transition: 'background 0.2s ease', display: 'flex', flexDirection: isDesktop ? 'row' : 'column' }}>
       {isDesktop && (
-        <SideNav theme={theme} activeTab={activeTab} onSwitch={switchTab} onOpenSettings={() => push('settings')} />
+        <SideNav theme={theme} activeTab={activeTab} onSwitch={switchTab} onOpenSettings={() => push('settings')}
+          googleUser={googleUser} syncState={syncState} onSyncClick={() => runSync(db, { interactive: true })} />
       )}
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {route.screen === 'home' && (
@@ -3505,7 +4040,10 @@ function App() {
         )}
         {route.screen === 'settings' && (
           <CenteredFormWrap isDesktop={isDesktop}>
-            <SettingsScreen theme={theme} mode={mode} setMode={handleSetMode} onBack={() => pop(1)} db={db} onDataRestored={handleDataRestored} />
+            <SettingsScreen theme={theme} mode={mode} setMode={handleSetMode} onBack={() => pop(1)} db={db} onDataRestored={handleDataRestored}
+              googleUser={googleUser} syncAuto={syncAuto} syncState={syncState}
+              onGoogleSignIn={handleGoogleSignIn} onGoogleSignOut={handleGoogleSignOut}
+              onSetSyncAuto={handleSetSyncAuto} onSyncNow={() => runSync(db, { interactive: true })} onResetAll={handleResetAll} />
           </CenteredFormWrap>
         )}
         {route.screen === 'datePicker' && (
@@ -3601,7 +4139,8 @@ function App() {
         />
       )}
       {atRoot && !isDesktop && (
-        <TabBar theme={theme} activeTab={activeTab} onSwitch={switchTab} />
+        <TabBar theme={theme} activeTab={activeTab} onSwitch={switchTab}
+          googleUser={googleUser} syncState={syncState} onSyncClick={() => runSync(db, { interactive: true })} />
       )}
     </div>
   );
@@ -3611,7 +4150,41 @@ function App() {
 // obrazovkách (nad DESKTOP_BREAKPOINT). Stejné čtyři záložky, svisle vlevo,
 // s logem appky a nastavením nahoře, ať se navigace nemusí hledat na dvou
 // různých místech podle šířky okna.
-function SideNav({ theme, activeTab, onSwitch, onOpenSettings }) {
+// Barva ikony synchronizace podle stavu — sdílená pro postranní i spodní menu.
+function syncColor(theme, status) {
+  if (status === 'error') return theme.em;
+  if (status === 'reconnect') return theme.primary;
+  if (status === 'ok' || status === 'syncing') return theme.primary;
+  return theme.textFaint;
+}
+
+// Ikona/tlačítko synchronizace do menu. Zobrazí se jen když je uživatel
+// přihlášený ke cloudu. Točí se během synchronizace, mění barvu podle stavu.
+function SyncMenuButton({ theme, googleUser, syncState, onClick, variant }) {
+  if (!googleUser) return null;
+  const st = syncState?.status;
+  const col = syncColor(theme, st);
+  const spin = st === 'syncing' ? { animation: 'spin 0.8s linear infinite' } : null;
+  if (variant === 'tab') {
+    return (
+      <button onClick={onClick} disabled={st === 'syncing'} title={st === 'syncing' ? 'Synchronizuji…' : 'Synchronizovat'}
+        style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '10px 0 8px', color: col, background: 'none', border: 'none' }}>
+        <span style={{ display: 'inline-flex', ...spin }}><Icon.Refresh size={21} /></span>
+        <span style={{ fontSize: 10.5, fontWeight: 500 }}>Sync</span>
+      </button>
+    );
+  }
+  const label = st === 'syncing' ? 'Obnovuji…' : 'Obnovit';
+  return (
+    <button onClick={onClick} disabled={st === 'syncing'} title={label}
+      style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 12px', borderRadius: 11, background: st === 'reconnect' || st === 'error' ? theme.primarySoft : 'none', border: 'none', color: col, textAlign: 'left' }}>
+      <span style={{ display: 'inline-flex', ...spin }}><Icon.Refresh size={19} /></span>
+      <span style={{ fontSize: 14, fontWeight: 500 }}>{label}</span>
+    </button>
+  );
+}
+
+function SideNav({ theme, activeTab, onSwitch, onOpenSettings, googleUser, syncState, onSyncClick }) {
   const tabs = [
     { key: 'timer', label: 'Timer', icon: Icon.Clock },
     { key: 'history', label: 'Historie', icon: Icon.Calendar },
@@ -3651,6 +4224,7 @@ function SideNav({ theme, activeTab, onSwitch, onOpenSettings }) {
         })}
       </div>
       <div style={{ flex: 1 }} />
+      <SyncMenuButton theme={theme} googleUser={googleUser} syncState={syncState} onClick={onSyncClick} />
       <button
         onClick={onOpenSettings}
         style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 12px', borderRadius: 11, background: 'none', border: 'none', color: theme.textDim, textAlign: 'left' }}
@@ -3670,9 +4244,10 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
   const [todayRecords, setTodayRecords] = useState([]);
   const liveElapsed = useElapsed(activeSession?.startTime, !!activeSession);
   // collapsed = ručně zasunuto (přetrvává, dokud znovu neklikneš na šipku).
-  // autoHide = "špendlík" vypnutý — panel se pak řídí najetím myši místo
+  // autoHide = ikona oka vypnutá — panel se pak řídí najetím myši místo
   // ručního stavu: v klidu zasunutý, po hoveru se vysune, po opuštění zase
-  // zpátky. openWidth je šířka panelu v otevřeném stavu, jde ji natáhnout
+  // zpátky. Aktivní oko (autoHide=false) = panel zůstává trvale vidět.
+  // openWidth je šířka panelu v otevřeném stavu, jde ji natáhnout
   // tažením za úchyt. Všechno tři se ukládá do settings, ať appka nezapomene
   // volbu po refreshi — stejný vzor jako appka má pro téma nebo počet
   // sloupců mřížky.
@@ -3853,10 +4428,10 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
             </button>
             <button
               onClick={toggleAutoHide}
-              title={autoHide ? 'Automatické skrývání zapnuto' : 'Automatické skrývání vypnuto'}
-              style={{ width: 24, height: 24, borderRadius: 7, background: autoHide ? theme.primarySoft : 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: autoHide ? theme.primary : theme.textFaint }}
+              title={autoHide ? 'Panel se skrývá — klikni, ať zůstává vidět' : 'Panel zůstává vidět'}
+              style={{ width: 24, height: 24, borderRadius: 7, background: autoHide ? 'none' : theme.primarySoft, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: autoHide ? theme.textFaint : theme.primary }}
             >
-              <Icon.Pin size={13} weight={autoHide ? 'fill' : 'regular'} />
+              <Icon.Eye size={14} weight={autoHide ? 'regular' : 'fill'} />
             </button>
           </div>
         </div>
@@ -3931,7 +4506,7 @@ function TodayPanel({ theme, db, refreshTick, activeSession, onOpenRecord, onOpe
   );
 }
 
-function TabBar({ theme, activeTab, onSwitch }) {
+function TabBar({ theme, activeTab, onSwitch, googleUser, syncState, onSyncClick }) {
   const tabs = [
     { key: 'timer', label: 'Timer', icon: Icon.Clock },
     { key: 'history', label: 'Historie', icon: Icon.Calendar },
@@ -3961,6 +4536,7 @@ function TabBar({ theme, activeTab, onSwitch }) {
           </button>
         );
       })}
+      <SyncMenuButton theme={theme} googleUser={googleUser} syncState={syncState} onClick={onSyncClick} variant="tab" />
     </div>
   );
 }
