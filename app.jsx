@@ -3,13 +3,13 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.74';
+const APP_VERSION = '6.82';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
 // ============================================================
 const DB_NAME = 'udrzba-db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 function getDB() {
   return new Promise((resolve, reject) => {
@@ -35,6 +35,12 @@ function getDB() {
       if (!idb.objectStoreNames.contains('categories')) {
         idb.createObjectStore('categories', { keyPath: 'id' });
       }
+      // Lokální cache stažených fotek (Firebase Storage odkaz → data-URL),
+      // ať appka nestahuje tu samou fotku znovu při každé drobné úpravě
+      // záznamu, do kterého patří. Viz cloudSync/resolvePhotos.
+      if (!idb.objectStoreNames.contains('photoCache')) {
+        idb.createObjectStore('photoCache', { keyPath: 'id' });
+      }
     };
     req.onsuccess = () => {
       const idb = req.result;
@@ -56,11 +62,16 @@ function getDB() {
             r.onerror = () => rej(r.error);
           });
         },
+        // put/delete navíc (mimo samotný zápis do IndexedDB) zavolají
+        // cloudSync.notify — ten změnu pošle do Firestore, pokud je appka
+        // přihlášená a jde o synchronizované úložiště. cloudSync svoje
+        // vlastní zápisy (přijaté OD Firestore) dělá přes rawPut/rawDelete,
+        // takže se tímhle hookem nikdy neprojdou zpátky — žádné echo.
         put(storeName, value) {
           return new Promise((res, rej) => {
             const tx = idb.transaction(storeName, 'readwrite');
             const r = tx.objectStore(storeName).put(value);
-            r.onsuccess = () => res(r.result);
+            r.onsuccess = () => { res(r.result); cloudSync.notify(storeName, 'put', value); };
             r.onerror = () => rej(r.error);
           });
         },
@@ -68,7 +79,7 @@ function getDB() {
           return new Promise((res, rej) => {
             const tx = idb.transaction(storeName, 'readwrite');
             const r = tx.objectStore(storeName).delete(key);
-            r.onsuccess = () => res(r.result);
+            r.onsuccess = () => { res(r.result); cloudSync.notify(storeName, 'delete', key); };
             r.onerror = () => rej(r.error);
           });
         },
@@ -82,307 +93,324 @@ function getDB() {
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 // ============================================================
-// CLOUD SYNCHRONIZACE — Google Drive (volitelná)
+// CLOUD SYNCHRONIZACE — Firebase (volitelná)
 // ------------------------------------------------------------
-// Appka zůstává offline-first: vše se ukládá lokálně do IndexedDB.
-// Když si uživatel zapne synchronizaci, appka navíc drží jednu kopii
-// dat (stroje + záznamy + kategorie, fotky jsou uvnitř záznamů jako
-// data-URL) v souboru na jeho Google Disku a slévá změny mezi zařízeními
-// tří­cestným merge oproti "shadow" stavu z poslední synchronizace —
-// takže úprava na jednom zařízení nepřepíše úpravu na druhém.
-// Oprávnění drive.file = appka vidí jen soubor, který sama vytvořila.
+// Appka zůstává offline-first: UI vždy čte a píše do lokální IndexedDB.
+// Po přihlášení appka navíc drží živé zrcadlo dat (stroje, záznamy,
+// kategorie, běžící časomíra) ve Firestore — každá lokální změna se
+// hned (na pozadí) pošle nahoru, každá vzdálená změna z jiného zařízení
+// přijde přes Firestore realtime listener a rovnou se zapíše do
+// IndexedDB. Firebase Auth (na rozdíl od dřívějšího Drive OAuth) si
+// drží přihlášení i po refreshi stránky a funguje bez oken i v Brave —
+// obnovuje token přímým voláním na Google, ne skrytým iframem.
+// Fotky se do Firestore neukládají (limit 1 MB/dokument) — jdou
+// zkomprimované do Firebase Storage a v dokumentu zůstává jen odkaz
+// ("gs:cesta"); appka ho při příjmu sama převede zpět na data-URL a do
+// lokální cache, takže zbytek appky (zobrazení, export, sdílení…)
+// o Storage vůbec neví a nemusel se kvůli tomu měnit.
 // ============================================================
-const GOOGLE_CLIENT_ID = '74515572136-vo9crrfcenfu658oe9fvc03u9pbm4bu2.apps.googleusercontent.com';
-const GOOGLE_SCOPE = 'openid email https://www.googleapis.com/auth/drive.file';
-const DRIVE_FILE_NAME = 'denik-udrzbare-data.json';
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyDJ-zeAXuIuaAtkmfZoybV6bqwQVc_qa10',
+  authDomain: 'denik-udrzbare.firebaseapp.com',
+  projectId: 'denik-udrzbare',
+  storageBucket: 'denik-udrzbare.firebasestorage.app',
+  messagingSenderId: '74515572136',
+  appId: '1:74515572136:web:c4e342cc3c0d09f921a99d',
+};
 // activeSession = běžící časomíra (jeden záznam s id 'active'). Synchronizuje se
 // taky, ať se spuštěný/zastavený timer projeví i na druhém zařízení.
 const SYNC_STORES = ['machines', 'records', 'categories', 'activeSession'];
+// Fotky jdou zkomprimované do Firebase Storage (soubor .jpg), v záznamu /
+// stroji / session zůstává jen odkaz "gs:cesta". Storage má oproti Firestoru
+// levnější úložiště a hlavně serverové lifecycle pravidlo — fotky starší
+// 1 roku se mažou samy, i když appku nikdo neotevře. Stahování z prohlížeče
+// vyžaduje nastavené CORS na bucketu (jednorázově, přes gsutil/Cloud Shell).
+const PHOTO_REF_PREFIX = 'gs:';
+const PHOTO_MAX_DIM = 1600;       // px, delší strana fotky po zmenšení
+const PHOTO_JPEG_QUALITY = 0.72;  // vede na cca 0,3–0,7 MB/fotku
 
-function loadGis() {
-  if (window.__gisPromise) return window.__gisPromise;
-  window.__gisPromise = new Promise((resolve, reject) => {
-    if (window.google?.accounts?.oauth2) { resolve(); return; }
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.async = true; s.defer = true;
-    s.onload = () => resolve();
-    s.onerror = () => { window.__gisPromise = null; reject(new Error('Nepodařilo se načíst přihlášení Google.')); };
-    document.head.appendChild(s);
-  });
-  return window.__gisPromise;
-}
-
-// Chyba, kterou appka nezobrazuje jako "selhalo" — jen si vyžádá tiché
-// znovupřipojení přes tlačítko (token po refreshi stránky v paměti není).
-const RECONNECT_ERROR = 'RECONNECT';
-
-const googleAuth = {
-  _token: null,
-  _expiry: 0,
-  _client: null,
-  email: null,
-
-  async _ensureClient() {
-    await loadGis();
-    if (!this._client) {
-      this._client = window.google.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_CLIENT_ID,
-        scope: GOOGLE_SCOPE,
-        callback: () => {},
-      });
-    }
-  },
-
-  _requestToken(prompt) {
-    return new Promise((resolve, reject) => {
-      this._client.callback = (resp) => {
-        if (resp && resp.access_token) {
-          this._token = resp.access_token;
-          this._expiry = Date.now() + (Number(resp.expires_in || 3600) - 60) * 1000;
-          resolve(resp.access_token);
-        } else {
-          reject(new Error(resp?.error || 'Přihlášení se nezdařilo.'));
-        }
-      };
-      this._client.error_callback = (err) => reject(new Error(err?.type || 'Přihlášení se nezdařilo.'));
-      const cfg = { prompt };
-      if (this.email) cfg.hint = this.email; // GIS pak nemusí ukazovat výběr účtu
-      try { this._client.requestAccessToken(cfg); }
-      catch (e) { reject(e); }
-    });
-  },
-
-  // Interaktivní přihlášení / znovupřipojení. prompt '' = souhlas jen poprvé,
-  // potom tiché (žádné nucené consent okno při každém připojení).
-  async signIn() {
-    await this._ensureClient();
-    await this._requestToken('');
-    await this._fetchEmail();
-    return this.email;
-  },
-
-  // Token. Po refreshi stránky žádný token v paměti není. Vždy se NEJDŘÍV zkusí
-  // tiché vydání ('none') z existující Google session — na Chrome projde bez okna.
-  // Když to prohlížeč nedovolí (Brave/Firefox blokují background iframe) a je to
-  // interaktivní akce (klik uživatele), teprve pak se otevře přihlašovací okno.
-  // Jinak RECONNECT (appka jen změní barvu ikony, nic nevyskočí).
-  async getToken(interactive = false) {
-    await this._ensureClient();
-    if (this._token && Date.now() < this._expiry) return this._token;
+let fbApp = null, fbAuthInst = null, fbDbInst = null, fbStorageInst = null;
+// Vrací { auth, db, storage } nebo null, když se Firebase SDK nepodařilo
+// načíst (výpadek CDN). Appka pak jede dál čistě offline — cloud je prostě
+// nedostupný, ale nic se nerozbije.
+function ensureFirebase() {
+  if (typeof firebase === 'undefined') return null;
+  if (!firebase.initializeApp) return null;
+  if (!fbApp) {
     try {
-      return await this._requestToken('none');
-    } catch (e) {
-      if (!interactive) throw new Error(RECONNECT_ERROR);
-    }
-    return this._requestToken('');
-  },
-
-  async _fetchEmail() {
+      fbApp = firebase.apps.length ? firebase.app() : firebase.initializeApp(FIREBASE_CONFIG);
+      fbAuthInst = firebase.auth();
+      fbDbInst = firebase.firestore();
+      // Appka posílá i pole, která nejsou vždy vyplněná (undefined) — bez
+      // tohohle by na ně Firestore SDK spadl chybou místo aby je přeskočil.
+      fbDbInst.settings({ ignoreUndefinedProperties: true });
+    } catch { fbApp = null; return null; }
+  }
+  if (!fbStorageInst) {
     try {
-      const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: 'Bearer ' + this._token },
-      });
-      if (r.ok) { const j = await r.json(); this.email = j.email || null; }
-    } catch { /* e-mail není kritický */ }
-  },
+      if (typeof firebase.storage !== 'function') console.warn('[sync] firebase-storage SDK se nenačetlo (blokátor / CDN) — fotky se nesynchronizují');
+      else fbStorageInst = firebase.storage();
+    } catch (e) { console.warn('[sync] firebase.storage() selhalo:', e?.message || e); }
+  }
+  return { auth: fbAuthInst, db: fbDbInst, storage: fbStorageInst };
+}
 
-  signOut() {
-    if (this._token && window.google?.accounts?.oauth2) {
-      try { window.google.accounts.oauth2.revoke(this._token, () => {}); } catch {}
-    }
-    this._token = null; this._expiry = 0; this.email = null;
-  },
-};
-
-async function driveFetch(path, opts = {}, _retry = true) {
-  const token = await googleAuth.getToken();
-  const r = await fetch(path, {
-    ...opts,
-    headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + token },
+// Zápis přímo do IndexedDB, MIMO wrapper z getDB() — cloudSync je používá
+// pro vlastní zápisy přijaté OD Firestore, ať se accidentally nepošlou
+// hookem v getDB() zase zpátky nahoru (nekonečné echo mezi zařízeními).
+function rawPut(db, store, value) {
+  return new Promise((res, rej) => {
+    const r = db.raw.transaction(store, 'readwrite').objectStore(store).put(value);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
   });
-  if (r.status === 401 && _retry) {
-    googleAuth._token = null; googleAuth._expiry = 0;
-    return driveFetch(path, opts, false);
-  }
-  if (!r.ok) {
-    const txt = await r.text().catch(() => '');
-    throw new Error('Google Disk: ' + r.status + ' ' + txt.slice(0, 120));
-  }
-  return r;
 }
-
-async function driveFindDataFile() {
-  const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
-  const r = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,modifiedTime)&spaces=drive`);
-  const j = await r.json();
-  return j.files && j.files[0] ? j.files[0].id : null;
-}
-
-async function driveDownloadJson(fileId) {
-  const r = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
-  return r.json();
-}
-
-// Jen metadata — čas poslední úpravy souboru. Levný dotaz pro polling.
-async function driveGetModifiedTime(fileId) {
-  const r = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=modifiedTime`);
-  const j = await r.json();
-  return j.modifiedTime || null;
-}
-
-// Vrací { id, modifiedTime } nahraného souboru.
-async function driveUploadJson(fileId, obj) {
-  const body = JSON.stringify(obj);
-  if (fileId) {
-    const r = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=id,modifiedTime`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
-    const j = await r.json();
-    return { id: fileId, modifiedTime: j.modifiedTime || null };
-  }
-  const boundary = 'denik' + Math.random().toString(36).slice(2);
-  const meta = { name: DRIVE_FILE_NAME, mimeType: 'application/json' };
-  const multipart =
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n` +
-    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
-  const r = await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime', {
-    method: 'POST',
-    headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-    body: multipart,
+function rawDelete(db, store, key) {
+  return new Promise((res, rej) => {
+    const r = db.raw.transaction(store, 'readwrite').objectStore(store).delete(key);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
   });
-  const j = await r.json();
-  return { id: j.id, modifiedTime: j.modifiedTime || null };
 }
 
-function stableStringify(v) {
-  if (v === null || typeof v !== 'object') return JSON.stringify(v);
-  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
-  return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+// ---- Fotky: komprese na klientovi, upload/stažení do Storage, lokální cache ----
+
+function compressPhotoToBlob(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      const scale = Math.min(1, PHOTO_MAX_DIM / Math.max(width, height));
+      width = Math.round(width * scale); height = Math.round(height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Komprese fotky selhala.')), 'image/jpeg', PHOTO_JPEG_QUALITY);
+    };
+    img.onerror = () => reject(new Error('Fotku se nepodařilo načíst.'));
+    img.src = dataUrl;
+  });
 }
-function hashEntity(e) {
-  const s = stableStringify(e);
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+function hashStr(s) {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
   return h.toString(36);
 }
-function indexById(arr) {
-  const m = {};
-  for (const e of (arr || [])) if (e && e.id != null) m[e.id] = e;
-  return m;
+async function getCachedPhoto(db, ref) {
+  const row = await db.get('photoCache', ref).catch(() => null);
+  return row ? row.dataUrl : null;
+}
+// Cache OBOUSMĚRNĚ: gs:cesta → data-URL (pro zobrazení) i hash(data-URL) →
+// gs:cesta (aby se ta samá fotka podruhé nenahrávala, když se záznam jen
+// drobně upraví — lokálně jsou fotky vždy data-URL).
+async function setCachedPhoto(db, ref, dataUrl) {
+  await rawPut(db, 'photoCache', { id: ref, dataUrl }).catch(() => {});
+  await rawPut(db, 'photoCache', { id: 'h:' + hashStr(dataUrl), ref }).catch(() => {});
 }
 
-// Trojcestný merge jednoho úložiště podle id.
-// L = lokální, R = vzdálené, S = shadow (stav po poslední synchronizaci).
-// Vrací { merged: {id:entity}, changedLocal: bool }.
-function mergeStore(localArr, remoteArr, shadowHashes) {
-  const L = indexById(localArr);
-  const R = indexById(remoteArr);
-  const S = shadowHashes || {};
-  const ids = new Set([...Object.keys(L), ...Object.keys(R), ...Object.keys(S)]);
-  const merged = {};
-  let changedLocal = false;   // výsledek se liší od toho, co bylo lokálně → přepsat IndexedDB
-  let changedRemote = false;  // výsledek se liší od toho, co je na Disku → nahrát
-  let conflicts = 0;
-  for (const id of ids) {
-    const l = L[id], r = R[id];
-    const lh = l ? hashEntity(l) : null;
-    const rh = r ? hashEntity(r) : null;
-    const sh = S[id] || null;
-    if (lh === rh) { if (l) merged[id] = l; continue; }      // shodné (nebo obě smazané)
-    const lChanged = lh !== sh;
-    const rChanged = rh !== sh;
-    let pick;
-    if (lChanged && !rChanged) pick = l;                      // změna jen lokálně
-    else if (rChanged && !lChanged) pick = r;                 // změna jen vzdáleně
-    else { pick = l; conflicts++; }                           // obojí → lokální vyhrává
-    if (pick) merged[id] = pick;
-    const ph = pick ? hashEntity(pick) : null;
-    if (ph !== lh) changedLocal = true;
-    if (ph !== rh) changedRemote = true;
+// Nahraje fotku (data-URL) do Storage a vrátí odkaz "gs:cesta" pro uložení
+// do dokumentu. Fotku, která už je odkazem (přišla z cloudu) nebo kterou
+// appka pozná podle hashe jako už jednou nahranou, nechá být.
+async function uploadPhotoIfNeeded(db, ownerUid, ownerId, photo) {
+  if (typeof photo !== 'string' || !photo.startsWith('data:')) return photo;
+  const known = await db.get('photoCache', 'h:' + hashStr(photo)).catch(() => null);
+  if (known?.ref) return known.ref;
+  const fb = ensureFirebase();
+  if (!fb || !fb.storage) { console.warn('[sync] fotku nelze nahrát — Storage není k dispozici (fb:', !!fb, 'storage:', !!(fb && fb.storage), ')'); return photo; }
+  const blob = await compressPhotoToBlob(photo);
+  const path = `users/${ownerUid}/photos/${ownerId}/${uid()}.jpg`;
+  try {
+    await fb.storage.ref(path).put(blob, { contentType: 'image/jpeg' });
+  } catch (e) {
+    console.warn('[sync] nahrání fotky do Storage selhalo:', path, e?.code || e?.message || e);
+    throw e;
   }
-  return { merged, changedLocal, changedRemote, conflicts };
+  console.log('[sync] fotka nahrána do Storage:', path);
+  const ref = PHOTO_REF_PREFIX + path;
+  await setCachedPhoto(db, ref, await blobToDataUrl(blob));
+  await setCachedPhoto(db, ref, photo); // i originál (před kompresí) ať se podruhé nenahraje
+  return ref;
 }
 
-// Hlavní synchronizace. db = wrapper z getDB(). Vrací shrnutí pro UI.
-async function syncNow(db) {
-  const shadowRec = (await db.get('settings', 'syncShadow').catch(() => null)) || { id: 'syncShadow', fileId: null, stores: {} };
-  let fileId = shadowRec.fileId || null;
-  if (!fileId) fileId = await driveFindDataFile();
-
-  let remote = { machines: [], records: [], categories: [], activeSession: [] };
-  if (fileId) {
-    try { remote = await driveDownloadJson(fileId); }
-    catch { fileId = await driveFindDataFile(); if (fileId) remote = await driveDownloadJson(fileId); }
+// Převede pole fotek přijatého dokumentu z odkazů zpět na data-URL (stáhne
+// jen ty, co appka ještě nemá v cache) — dál appka pracuje se záznamem
+// úplně stejně, jako když byly fotky vždycky přímo v něm. Fotka smazaná
+// lifecycle pravidlem (>1 rok) se prostě přeskočí.
+async function resolvePhotos(db, photos) {
+  if (!Array.isArray(photos) || photos.length === 0) return photos || [];
+  const fb = ensureFirebase();
+  const out = [];
+  for (const p of photos) {
+    if (typeof p !== 'string' || !p.startsWith(PHOTO_REF_PREFIX)) {
+      if (typeof p === 'string' && p.startsWith('data:')) out.push(p); // stará data přímo v záznamu
+      continue;
+    }
+    const cached = await getCachedPhoto(db, p);
+    if (cached) { out.push(cached); continue; }
+    if (!fb || !fb.storage) continue;
+    try {
+      const url = await fb.storage.ref(p.slice(PHOTO_REF_PREFIX.length)).getDownloadURL();
+      const blob = await fetch(url).then(r => r.blob());
+      const dataUrl = await blobToDataUrl(blob);
+      await setCachedPhoto(db, p, dataUrl);
+      out.push(dataUrl);
+    } catch (e) {
+      console.warn('[sync] fotku se nepodařilo stáhnout ze Storage:', p, e?.message || e);
+      // fotka nedostupná (vypršela / offline / CORS) — v appce prostě chybí
+    }
   }
+  return out;
+}
 
-  const local = {};
-  for (const s of SYNC_STORES) local[s] = await db.getAll(s);
+// ---- Přihlášení + realtime synchronizace ----
 
-  const newShadowStores = {};
-  const finalArrays = {};
-  let anyLocalChange = false;
-  let anyRemoteChange = false;
-  let totalConflicts = 0;
+const cloudSync = {
+  uid: null,
+  db: null,
+  listeners: [],
 
-  for (const s of SYNC_STORES) {
-    const { merged, changedLocal, changedRemote, conflicts } = mergeStore(local[s], remote[s], shadowRec.stores[s]);
-    if (changedLocal) anyLocalChange = true;
-    if (changedRemote) anyRemoteChange = true;
-    totalConflicts += conflicts;
+  async signIn() {
+    const fb = ensureFirebase();
+    if (!fb) throw new Error('Cloud služba se nenačetla — zkus to za chvíli znovu.');
+    await fb.auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+  },
+  async signOut() {
+    this.stopListening();
+    const fb = ensureFirebase();
+    if (fb) await fb.auth.signOut();
+  },
 
-    const localIdx = indexById(local[s]);
-    // zápis změn do IndexedDB
-    for (const id of Object.keys(merged)) {
-      if (hashEntity(merged[id]) !== (localIdx[id] ? hashEntity(localIdx[id]) : null)) {
-        await db.put(s, merged[id]);
+  // Napojí realtime poslech všech synchronizovaných úložišť. Každá
+  // vzdálená změna (z tohoto i jiného zařízení) se zapíše do IndexedDB
+  // přes rawPut/rawDelete a appka o tom dostane echo přes onRemoteChange.
+  startListening(db, ownerUid, onRemoteChange) {
+    this.stopListening();
+    const fb = ensureFirebase();
+    if (!fb) return;
+    this.db = db;
+    this.uid = ownerUid;
+    const fs = fb.db;
+    for (const store of SYNC_STORES) {
+      const unsub = fs.collection('users').doc(ownerUid).collection(store).onSnapshot(async (snap) => {
+        let changed = false;
+        const chs = snap.docChanges();
+        if (chs.length) console.log('[sync] přišlo z cloudu:', store, chs.map(c => c.type + ':' + c.doc.id).join(', '));
+        for (const change of chs) {
+          const id = change.doc.id;
+          if (change.type === 'removed') {
+            await rawDelete(db, store, id);
+          } else {
+            const record = { ...change.doc.data(), id };
+            if (Array.isArray(record.photos)) console.log('[sync] dokument z cloudu má fotek:', store, id, record.photos.length, JSON.stringify(record.photos).slice(0, 120));
+            if (record.photos) {
+              const resolved = await resolvePhotos(db, record.photos);
+              // Bezpečnostní pojistka: lokální data: fotku, která se ještě
+              // NIKDY nenahrála (v cache pro její hash NENÍ žádný gs: odkaz),
+              // necháme být — jinak by výpadek uploadu smazal fotku i lokálně.
+              // Fotku, která odkaz MÁ (už se jednou nahrála) a v příchozím
+              // záznamu chybí, ale bereme jako záměrně smazanou → NEvracíme.
+              const local = await db.get(store, id).catch(() => null);
+              for (const lp of (local?.photos || [])) {
+                if (typeof lp !== 'string' || !lp.startsWith('data:')) continue;
+                const h = await db.get('photoCache', 'h:' + hashStr(lp)).catch(() => null);
+                if (!h?.ref) resolved.push(lp);
+              }
+              record.photos = resolved;
+            }
+            await rawPut(db, store, record);
+          }
+          changed = true;
+        }
+        if (changed) onRemoteChange(store);
+      }, () => { /* výpadek spojení — Firestore SDK se sám znovu připojí a listener obnoví */ });
+      this.listeners.push(unsub);
+    }
+  },
+  stopListening() {
+    this.listeners.forEach(u => { try { u(); } catch {} });
+    this.listeners = [];
+    this.uid = null;
+  },
+
+  // Zavolá getDB() wrapper po každém put/delete — pošle změnu do Firestore
+  // na pozadí (appka na to nečeká, zůstává okamžitá i offline).
+  notify(store, type, value) {
+    if (!this.uid || !SYNC_STORES.includes(store)) return;
+    this.pushChange(store, type, value).catch(() => {});
+  },
+  _retryTimers: {},
+  async pushChange(store, type, value) {
+    const fb = ensureFirebase();
+    if (!fb) return;
+    const fs = fb.db;
+    const id = type === 'delete' ? value : value.id;
+    const ref = fs.collection('users').doc(this.uid).collection(store).doc(String(id));
+    if (type === 'delete') { await ref.delete(); return; }
+    const payload = { ...value };
+    delete payload.id;
+    if (Array.isArray(payload.photos)) {
+      // Fotky nahráváme po jedné do Storage. Do Firestoru dáme jen odkazy na
+      // ty úspěšně nahrané — text a hotové fotky se synchronizují hned, i když
+      // se jedna fotka zrovna nenahrála. Nenahranou fotku appka nechává
+      // lokálně (echo z Firestoru ji nesmaže, viz merge v startListening)
+      // a za 5 s zkusí celý push znovu.
+      const refs = [];
+      let unresolved = false;
+      for (const p of payload.photos) {
+        try {
+          const r = await uploadPhotoIfNeeded(this.db, this.uid, String(id), p);
+          if (typeof r === 'string' && r.startsWith(PHOTO_REF_PREFIX)) refs.push(r);
+          else unresolved = true;
+        } catch (e) { unresolved = true; console.warn('[sync] fotka se nenahrála, push odložen:', store, id, e?.code || e?.message || e); }
+      }
+      payload.photos = refs;
+      console.log('[sync] posílám do cloudu:', store, id, 'fotek:', refs.length, unresolved ? '(něco se nenahrálo, retry za 5s)' : '');
+      if (unresolved) {
+        clearTimeout(this._retryTimers[store + id]);
+        this._retryTimers[store + id] = setTimeout(async () => {
+          const cur = await this.db.get(store, id).catch(() => null);
+          if (cur) this.pushChange(store, 'put', cur).catch(() => {});
+        }, 5000);
       }
     }
-    for (const id of Object.keys(localIdx)) {
-      if (!(id in merged)) await db.delete(s, id);
+    try {
+      await ref.set(payload);
+    } catch (e) {
+      console.warn('[sync] zápis do cloudu selhal:', store, id, e?.code || e?.message || e);
+      // appka je offline-first — Firestore SDK zápis při výpadku sítě stejně
+      // zafrontuje a odešle sám; u jiných chyb (pravidla) to aspoň uvidíme.
     }
+  },
 
-    const arr = Object.values(merged);
-    finalArrays[s] = arr;
-    const hashes = {};
-    for (const e of arr) hashes[e.id] = hashEntity(e);
-    newShadowStores[s] = hashes;
-  }
+  // Natáhne aktuální stav z Firestore zpátky do IndexedDB — používá se po
+  // "Resetovat vše", kdy se lokální kopie smaže, ale appka se má hned
+  // vrátit do hry se sdíleným stavem, ne čekat na další vzdálenou změnu.
+  async pullAllFromCloud(db) {
+    const fb = ensureFirebase();
+    if (!this.uid || !fb) return;
+    const fs = fb.db;
+    for (const store of SYNC_STORES) {
+      const snap = await fs.collection('users').doc(this.uid).collection(store).get();
+      for (const doc of snap.docs) {
+        const record = { ...doc.data(), id: doc.id };
+        if (record.photos) record.photos = await resolvePhotos(db, record.photos);
+        await rawPut(db, store, record);
+      }
+    }
+  },
 
-  // Na Disk nahrajeme jen když se sloučený stav liší od toho, co tam je —
-  // jinak by každý "prázdný" sync (návrat do appky, polling) zbytečně
-  // přepsal soubor, posunul čas úpravy a rozjel ping-pong mezi zařízeními.
-  let finalId = fileId;
-  let finalModified = shadowRec.remoteModified || null;
-  if (anyRemoteChange || !fileId) {
-    const payload = { app: 'denik-udrzbare', version: APP_VERSION, syncedAt: new Date().toISOString(), ...finalArrays };
-    const up = await driveUploadJson(fileId, payload);
-    finalId = up.id;
-    finalModified = up.modifiedTime;
-  } else if (fileId) {
-    // stav se neměnil — jen si poznamenáme aktuální čas úpravy, ať polling
-    // příště nehlásí faleš­ný poplach kvůli úpravě z jiného (už staženého) zdroje
-    try { finalModified = await driveGetModifiedTime(fileId); } catch {}
-  }
-
-  await db.put('settings', { id: 'syncShadow', fileId: finalId, stores: newShadowStores, remoteModified: finalModified });
-  await db.put('settings', { id: 'syncMeta', lastSyncAt: Date.now(), email: googleAuth.email });
-
-  return { localChanged: anyLocalChange, conflicts: totalConflicts };
-}
-
-// Levná kontrola, jestli soubor na Disku upravilo jiné zařízení od naší
-// poslední synchronizace. Stáhne jen metadata (čas úpravy), ne celý soubor.
-async function remoteHasNewData(db) {
-  const shadow = await db.get('settings', 'syncShadow').catch(() => null);
-  if (!shadow || !shadow.fileId || !shadow.remoteModified) return false;
-  try {
-    const mt = await driveGetModifiedTime(shadow.fileId);
-    return !!mt && mt !== shadow.remoteModified;
-  } catch { return false; }
-}
+  async reconnect() {
+    try { const fb = ensureFirebase(); if (fb) await fb.db.enableNetwork(); } catch {}
+  },
+};
 
 function pad(n) { return n.toString().padStart(2, '0'); }
 
@@ -1080,7 +1108,7 @@ function HomeScreen({ theme, db, activeSession, onStart, onStop, onOpenSettings,
   );
 }
 
-function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored, googleUser, syncAuto, syncState, onGoogleSignIn, onGoogleSignOut, onSetSyncAuto, onSyncNow, onResetAll }) {
+function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored, googleUser, syncState, onGoogleSignIn, onGoogleSignOut, onResetAll }) {
   const [confirmReset, setConfirmReset] = useState(false);
   const options = [
     { key: 'light', label: 'Světlý', icon: Icon.Sun },
@@ -1197,13 +1225,13 @@ function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored, goog
         <Card theme={theme} style={{ padding: '16px 18px', marginBottom: 24 }}>
           <div style={{ fontSize: 13, color: theme.textDim, lineHeight: 1.5, marginBottom: 14 }}>
             {googleUser
-              ? 'Data (stroje, záznamy, fotky) se drží ve tvém Google Disku a slévají se mezi zařízeními.'
-              : 'Přihlas se přes Google a data se budou přenášet mezi tvými zařízeními přes tvůj Google Disk. Appka vidí jen svůj vlastní soubor, k ničemu jinému na Disku nemá přístup.'}
+              ? 'Stroje, záznamy, fotky i běžící časomíra se drží v tvém soukromém cloudovém úložišti a přenášejí se mezi zařízeními samy, hned jak se něco změní.'
+              : 'Přihlas se přes Google a data se budou automaticky přenášet mezi tvými zařízeními. Vidí je jen tvůj účet.'}
           </div>
 
           {!googleUser ? (
-            <button onClick={onGoogleSignIn} disabled={syncState.status === 'syncing'}
-              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`, borderRadius: 12, padding: '12px', color: theme.text, fontSize: 13.5, fontWeight: 600, opacity: syncState.status === 'syncing' ? 0.6 : 1 }}>
+            <button onClick={onGoogleSignIn} disabled={syncState.status === 'connecting'}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`, borderRadius: 12, padding: '12px', color: theme.text, fontSize: 13.5, fontWeight: 600, opacity: syncState.status === 'connecting' ? 0.6 : 1 }}>
               <Icon.Cloud size={16} />
               <span>Přihlásit se přes Google</span>
             </button>
@@ -1214,33 +1242,16 @@ function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored, goog
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{googleUser.email || 'Přihlášen'}</span>
               </div>
 
-              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13, color: theme.textDim, marginBottom: 12 }}>
-                <span>Synchronizovat automaticky</span>
-                <input type="checkbox" checked={!!syncAuto} onChange={e => onSetSyncAuto(e.target.checked)} style={{ width: 18, height: 18, accentColor: theme.primary }} />
-              </label>
-
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button onClick={onSyncNow} disabled={syncState.status === 'syncing'}
-                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: syncState.status === 'reconnect' ? theme.primarySoft : theme.surfaceElevated, border: `1px solid ${syncState.status === 'reconnect' ? theme.primary : theme.borderStrong}`, borderRadius: 12, padding: '12px', color: syncState.status === 'reconnect' ? theme.primary : theme.text, fontSize: 13.5, fontWeight: 600, opacity: syncState.status === 'syncing' ? 0.6 : 1 }}>
-                  <Icon.Refresh size={16} />
-                  <span>{syncState.status === 'syncing' ? 'Synchronizuji…' : 'Synchronizovat teď'}</span>
-                </button>
-                <button onClick={onGoogleSignOut}
-                  style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`, borderRadius: 12, padding: '12px 14px', color: theme.textDim, fontSize: 13.5, fontWeight: 600 }}>
-                  Odhlásit
-                </button>
-              </div>
+              <button onClick={onGoogleSignOut}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: theme.surfaceElevated, border: `1px solid ${theme.borderStrong}`, borderRadius: 12, padding: '12px', color: theme.textDim, fontSize: 13.5, fontWeight: 600 }}>
+                Odhlásit
+              </button>
 
               <div style={{ fontSize: 12, color: syncState.status === 'error' ? theme.em : theme.textFaint, marginTop: 10, lineHeight: 1.4 }}>
                 {syncState.msg
-                  || (syncState.status === 'reconnect' && 'Klikni na „Synchronizovat teď" pro obnovení připojení k Google.')
-                  || (syncState.status === 'error' && 'Synchronizace se nezdařila.')
-                  || (syncState.lastSyncAt ? `Naposledy synchronizováno ${fmtSyncTime(syncState.lastSyncAt)}` : 'Zatím nesynchronizováno')}
-              </div>
-              <div style={{ fontSize: 11.5, color: theme.textFaint, marginTop: 8, lineHeight: 1.45 }}>
-                {syncAuto
-                  ? 'Automaticky: appka nahraje změny na Disk pár sekund po každé úpravě a stáhne novinky při otevření.'
-                  : 'Ručně: měníš-li data, klikni na „Synchronizovat teď", jinak se na Disk nic nenahraje.'}
+                  || (syncState.status === 'error' && 'Připojení k cloudu se nezdařilo.')
+                  || (syncState.status === 'connecting' && 'Připojuji…')
+                  || (syncState.lastSyncAt ? `Naposledy synchronizováno ${fmtSyncTime(syncState.lastSyncAt)}` : 'Čeká se na první synchronizaci…')}
               </div>
             </>
           )}
@@ -1250,7 +1261,7 @@ function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored, goog
         <Card theme={theme} style={{ padding: '16px 18px', marginBottom: 24 }}>
           <div style={{ fontSize: 13, color: theme.textDim, lineHeight: 1.5, marginBottom: 14 }}>
             Smaže všechny stroje, záznamy oprav a kategorie v tomto zařízení.
-            {googleUser ? ' Synchronizace zůstane přihlášená — při dalším sladění se stáhne společný stav z Google Disku (z ostatních zařízení).' : ' Tuto akci nelze vrátit.'}
+            {googleUser ? ' Synchronizace zůstane přihlášená — appka si hned vrátí zpět sdílený stav z cloudu (z ostatních zařízení).' : ' Tuto akci nelze vrátit.'}
           </div>
           <button onClick={() => setConfirmReset(true)}
             style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: theme.emSoft, border: `1px solid ${theme.em}55`, borderRadius: 12, padding: '12px', color: theme.em, fontSize: 13.5, fontWeight: 700 }}>
@@ -1274,7 +1285,7 @@ function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored, goog
         <Card theme={theme} style={{ padding: '16px 18px' }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: theme.text, marginBottom: 3 }}>Deník údržbáře</div>
           <div style={{ fontSize: 13, color: theme.textFaint }}>Verze {APP_VERSION}</div>
-          <div style={{ fontSize: 12.5, color: theme.textFaint, marginTop: 8, lineHeight: 1.5 }}>{googleUser ? 'Data se ukládají v tomto zařízení a synchronizují se přes tvůj Google Disk.' : 'Data se ukládají pouze v tomto zařízení.'}</div>
+          <div style={{ fontSize: 12.5, color: theme.textFaint, marginTop: 8, lineHeight: 1.5 }}>{googleUser ? 'Data se ukládají v tomto zařízení a synchronizují se v cloudu s tvými ostatními zařízeními.' : 'Data se ukládají pouze v tomto zařízení.'}</div>
         </Card>
 
         <a
@@ -1299,7 +1310,7 @@ function SettingsScreen({ theme, mode, setMode, onBack, db, onDataRestored, goog
           <div onClick={e => e.stopPropagation()} style={{ background: theme.surfaceSolid, border: `1px solid ${theme.borderStrong}`, borderRadius: 20, padding: 22, width: '100%', maxWidth: 320, boxShadow: theme.shadow }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: theme.text, marginBottom: 4 }}>Resetovat vše?</div>
             <div style={{ fontSize: 13, color: theme.textDim, marginBottom: 18, lineHeight: 1.5 }}>
-              Smažou se všechny stroje, záznamy oprav a kategorie v tomto zařízení{googleUser ? '. Synchronizace zůstane přihlášená a při dalším sladění se stáhne společný stav z Google Disku.' : '. Tato akce se nedá vrátit.'}
+              Smažou se všechny stroje, záznamy oprav a kategorie v tomto zařízení{googleUser ? '. Synchronizace zůstane přihlášená — appka si hned natáhne zpátky sdílený stav z cloudu.' : '. Tato akce se nedá vrátit.'}
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => setConfirmReset(false)} style={{ flex: 1, background: theme.surfaceElevated, border: `1px solid ${theme.border}`, borderRadius: 12, padding: '12px', color: theme.text, fontWeight: 600 }}>Zrušit</button>
@@ -1452,7 +1463,8 @@ function DurationEditor({ theme, valueMs, onChange }) {
 // databázi (jen rozpracovaná data v activeSession), takže není co mazat a
 // není třeba stahovat/sdílet — jen zobrazit, co je zatím zadané, a nabídnout
 // tlačítko pro editaci.
-function LivePreview({ theme, session, liveElapsed, onBack, onHome, onEdit }) {
+function LivePreview({ theme, session, liveElapsed, onBack, onHome, onEdit, onUpdateMaterial, onRemoveMaterial }) {
+  const [editingMaterialIdx, setEditingMaterialIdx] = useState(null);
   const color = session.type === 'EM' ? theme.em : (session.cmSubtype === 'oprava' ? theme.cmAlt : theme.cm);
   const soft = session.type === 'EM' ? theme.emSoft : (session.cmSubtype === 'oprava' ? theme.cmAltSoft : theme.cmSoft);
   const typeLabel = session.type === 'EM'
@@ -1515,7 +1527,16 @@ function LivePreview({ theme, session, liveElapsed, onBack, onHome, onEdit }) {
         {session.materials?.length > 0 && (
           <div style={{ marginBottom: 26 }}>
             <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: theme.textFaint, marginBottom: 8 }}>Materiál</div>
-            <MaterialList theme={theme} materials={session.materials} editingIdx={null} onEdit={() => {}} onRemove={() => {}} />
+            <MaterialList theme={theme} materials={session.materials} editingIdx={editingMaterialIdx}
+              onEdit={(i) => setEditingMaterialIdx(i)}
+              onRemove={(i) => { if (editingMaterialIdx === i) setEditingMaterialIdx(null); onRemoveMaterial?.(i); }} />
+            {editingMaterialIdx !== null && (session.materials || [])[editingMaterialIdx] && (
+              <div style={{ marginTop: 10 }}>
+                <MaterialEditor theme={theme} initial={session.materials[editingMaterialIdx]}
+                  onSubmit={(mat) => { onUpdateMaterial?.(editingMaterialIdx, mat); setEditingMaterialIdx(null); }}
+                  onCancelEdit={() => setEditingMaterialIdx(null)} />
+              </div>
+            )}
           </div>
         )}
         {!session.wo && !session.issue && !session.solution && !session.photos?.length && !session.materials?.length && (
@@ -2919,8 +2940,8 @@ function MaterialEditor({ theme, initial, onSubmit, onCancelEdit }) {
             <Icon.X size={18} />
           </button>
         )}
-        <button onClick={submit} disabled={!canSubmit} style={{ width: 44, borderRadius: 12, background: canSubmit ? theme.primarySoft : theme.surface, border: `1px solid ${canSubmit ? theme.primary : theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: canSubmit ? theme.primary : theme.textFaint, flexShrink: 0 }}>
-          <Icon.Check size={18} weight="bold" />
+        <button onClick={submit} disabled={!canSubmit} title={initial ? 'Uložit úpravu' : 'Přidat materiál'} style={{ width: 44, borderRadius: 12, background: canSubmit ? theme.primarySoft : theme.surface, border: `1px solid ${canSubmit ? theme.primary : theme.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: canSubmit ? theme.primary : theme.textFaint, flexShrink: 0 }}>
+          {initial ? <Icon.Check size={18} weight="bold" /> : <Icon.Plus size={18} weight="bold" />}
         </button>
       </div>
       {showQtyPicker && (
@@ -3561,12 +3582,7 @@ function App() {
   const [galleryColumns, setGalleryColumns] = useState(3);
   const [machineColumns, setMachineColumns] = useState(3);
   const [googleUser, setGoogleUser] = useState(null); // { email } nebo null
-  const [syncAuto, setSyncAuto] = useState(true);
-  const [syncState, setSyncState] = useState({ status: 'idle', lastSyncAt: null, msg: null }); // idle|syncing|ok|error|reconnect
-  const syncTimerRef = useRef(null);
-  const syncingRef = useRef(false);
-  const syncStatusRef = useRef('idle');
-  syncStatusRef.current = syncState.status;
+  const [syncState, setSyncState] = useState({ status: 'idle', lastSyncAt: null, msg: null }); // idle|connecting|online|error
   const stackRef = useRef(stack);
   stackRef.current = stack;
   const activeTabRef = useRef(activeTab);
@@ -3593,142 +3609,68 @@ function App() {
       const wideDefault = window.innerWidth >= DESKTOP_BREAKPOINT ? 5 : 3;
       setGalleryColumns(gallerySettings?.columns || wideDefault);
       setMachineColumns(machineSettings?.columns || wideDefault);
-
-      const gUser = await database.get('settings', 'googleUser').catch(() => null);
-      const syncCfg = await database.get('settings', 'syncConfig').catch(() => null);
-      const syncMeta = await database.get('settings', 'syncMeta').catch(() => null);
-      if (syncCfg && typeof syncCfg.auto === 'boolean') setSyncAuto(syncCfg.auto);
-      if (syncMeta?.lastSyncAt) setSyncState(st => ({ ...st, lastSyncAt: syncMeta.lastSyncAt }));
-      if (gUser?.email) {
-        setGoogleUser({ email: gUser.email });
-        googleAuth.email = gUser.email;
-        // po startu appky zkusíme tichou synchronizaci (bez okna); když token
-        // vypršel a je potřeba souhlas, jen to tiše selže a uživatel klikne
-        // "Synchronizovat teď" ručně.
-        if (!syncCfg || syncCfg.auto !== false) runSync(database, { silent: true });
-      }
     });
   }, []);
 
-  // Jádro synchronizace obalené o stavové hlášky a ochranu proti souběhu.
-  // interactive = smí se otevřít okno pro (znovu)připojení účtu.
-  const runSync = useCallback(async (database, { silent = false, interactive = false } = {}) => {
-    const d = database || db;
-    if (!d || syncingRef.current) return;
-    syncingRef.current = true;
-    setSyncState(st => ({ ...st, status: 'syncing', msg: null }));
-    try {
-      await googleAuth.getToken(interactive);
-      const res = await syncNow(d);
-      const now = Date.now();
-      setSyncState({ status: 'ok', lastSyncAt: now, msg: res.conflicts ? `Sloučeno (${res.conflicts}× souběžná úprava — ponechána zdejší verze).` : null });
-      if (res.localChanged) {
-        setRefreshTick(t => t + 1);
-        const sessions = await d.getAll('activeSession');
-        setActiveSession(sessions[0] || null);
-      }
-    } catch (e) {
-      if (e?.message === RECONNECT_ERROR) {
-        // Token po refreshi chybí a tiché obnovení nešlo — jen nabídnout tlačítko.
-        setSyncState(st => ({ ...st, status: 'reconnect', msg: null }));
+  // Firebase Auth — appka jen odposlouchává stav přihlášení (samo se drží
+  // i po refreshi, žádný ruční token na starost). Jakmile je uživatel
+  // přihlášený, napojí se realtime poslech Firestore; při odhlášení se
+  // odpojí. Lokální data v IndexedDB se odhlášením nemažou, appka funguje
+  // dál offline.
+  useEffect(() => {
+    if (!db) return;
+    const fb = ensureFirebase();
+    if (!fb) { setSyncState({ status: 'idle', lastSyncAt: null, msg: null }); return; }
+    const unsub = fb.auth.onAuthStateChanged((user) => {
+      if (user) {
+        setGoogleUser({ email: user.email });
+        setSyncState(st => ({ ...st, status: 'connecting', msg: null }));
+        cloudSync.startListening(db, user.uid, async (store) => {
+          setSyncState({ status: 'online', lastSyncAt: Date.now(), msg: null });
+          setRefreshTick(t => t + 1);
+          if (store === 'activeSession') {
+            const sessions = await db.getAll('activeSession');
+            setActiveSession(sessions[0] || null);
+          }
+        });
       } else {
-        setSyncState(st => ({ ...st, status: 'error', msg: silent ? null : (e?.message || 'Synchronizace se nezdařila.') }));
+        cloudSync.stopListening();
+        setGoogleUser(null);
+        setSyncState({ status: 'idle', lastSyncAt: null, msg: null });
       }
-    } finally {
-      syncingRef.current = false;
-    }
+    });
+    return () => unsub();
   }, [db]);
 
   const handleGoogleSignIn = useCallback(async () => {
-    setSyncState(st => ({ ...st, status: 'syncing', msg: null }));
+    setSyncState(st => ({ ...st, status: 'connecting', msg: null }));
     try {
-      const email = await googleAuth.signIn();
-      setGoogleUser({ email });
-      if (db) await db.put('settings', { id: 'googleUser', email });
-      await runSync(db, {});
+      await cloudSync.signIn();
+      // zbytek (nastavení googleUser, napojení poslechu) udělá onAuthStateChanged výše
     } catch (e) {
       setSyncState(st => ({ ...st, status: 'error', msg: e?.message || 'Přihlášení se nezdařilo.' }));
     }
-  }, [db, runSync]);
+  }, []);
 
   const handleGoogleSignOut = useCallback(async () => {
-    googleAuth.signOut();
-    setGoogleUser(null);
-    if (db) {
-      await db.delete('settings', 'googleUser').catch(() => {});
-      await db.delete('settings', 'syncShadow').catch(() => {});
-    }
-    setSyncState({ status: 'idle', lastSyncAt: null, msg: null });
-  }, [db]);
-
-  const handleSetSyncAuto = useCallback(async (val) => {
-    setSyncAuto(val);
-    if (db) await db.put('settings', { id: 'syncConfig', auto: val });
-  }, [db]);
+    await cloudSync.signOut();
+  }, []);
 
   // Kompletní reset dat tohoto zařízení (stroje, záznamy, kategorie, běžící
-  // časomíra). Vzhled a přihlášení zůstávají. Když je zapnutá synchronizace,
-  // smaže se i "shadow" — příští synchronizace pak proběhne jako čisté stažení
-  // z Disku (tj. appka NEpropaguje toto smazání do cloudu ani na jiná zařízení),
-  // takže zařízení se jen "vrátí do hry" a natáhne si společný stav.
+  // časomíra). Vzhled a přihlášení zůstávají. Maže se jen lokálně (přes
+  // rawDelete, mimo hook co posílá změny do Firestore) a appka si hned
+  // potom natáhne aktuální sdílený stav zpátky z cloudu — zařízení se tak
+  // jen "vrátí do hry", reset se do cloudu ani na jiná zařízení nepropaguje.
   const handleResetAll = useCallback(async () => {
     if (!db) return;
     for (const s of ['machines', 'records', 'categories', 'activeSession']) {
       const all = await db.getAll(s).catch(() => []);
-      for (const e of all) await db.delete(s, e.id);
+      for (const e of all) await rawDelete(db, s, e.id);
     }
-    await db.delete('settings', 'syncShadow').catch(() => {});
     setActiveSession(null);
     setRefreshTick(t => t + 1);
-    if (googleUser && syncAuto) runSync(db, { silent: true });
-  }, [db, googleUser, syncAuto, runSync]);
-
-  // Auto-synchronizace po lokální změně dat (debounce), když je uživatel přihlášený.
-  // Když je spojení s Googlem "pozastavené" (prohlížeč blokuje tiché obnovení —
-  // typicky Brave/Firefox), tahle změna přišla po kliknutí uživatele, takže se
-  // rovnou pokusíme o interaktivní připojení — okno se smí otevřít, protože
-  // gesto uživatele je čerstvé. Jinak běžný tichý sync po ~2 s.
-  useEffect(() => {
-    if (!db || !googleUser || !syncAuto) return;
-    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-    const reconnect = syncStatusRef.current === 'reconnect';
-    syncTimerRef.current = setTimeout(() => {
-      runSync(db, syncStatusRef.current === 'reconnect' ? { interactive: true } : { silent: true });
-    }, reconnect ? 400 : 2000);
-    return () => { if (syncTimerRef.current) clearTimeout(syncTimerRef.current); };
-  }, [refreshTick, db, googleUser, syncAuto, runSync]);
-
-  // Stáhne novinky z Disku, ale JEN když soubor mezitím upravilo jiné zařízení
-  // (levný dotaz na čas úpravy, ne celý soubor). Používá se pro návrat do appky
-  // i pro polling — ať se velký soubor s fotkami zbytečně nestahuje pořád.
-  const pullIfRemoteChanged = useCallback(async () => {
-    if (!db || syncingRef.current) return;
-    try { if (await remoteHasNewData(db)) runSync(db, { silent: true }); } catch {}
-  }, [db, runSync]);
-
-  // Sync při návratu do appky (odemčení telefonu, přepnutí zpět na kartu).
-  useEffect(() => {
-    if (!db || !googleUser || !syncAuto) return;
-    const onVisible = () => { if (document.visibilityState === 'visible') pullIfRemoteChanged(); };
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('focus', onVisible);
-    return () => {
-      document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('focus', onVisible);
-    };
-  }, [db, googleUser, syncAuto, pullIfRemoteChanged]);
-
-  // Lehký polling, dokud je appka otevřená a viditelná: každých 90 s se zeptá
-  // jen na čas úpravy souboru a plný sync spustí, jen když ho změnilo jiné
-  // zařízení. Řeší "appka běží na PC, měním na mobilu". Náklady: drobný dotaz
-  // za 90 s, zdarma.
-  useEffect(() => {
-    if (!db || !googleUser || !syncAuto) return;
-    const iv = setInterval(() => {
-      if (document.visibilityState === 'visible') pullIfRemoteChanged();
-    }, 90000);
-    return () => clearInterval(iv);
-  }, [db, googleUser, syncAuto, pullIfRemoteChanged]);
+    if (cloudSync.uid) await cloudSync.pullAllFromCloud(db);
+  }, [db]);
 
   useEffect(() => {
     // Appka potřebuje aspoň dvě vrstvy v historii prohlížeče hned od startu,
@@ -3821,61 +3763,29 @@ function App() {
     setRefreshTick(t => t + 1); // ať se spuštěná časomíra propíše i na druhé zařízení
   }
 
-  // Uloží libovolné pole "rozpracované" opravy (stroj, typ, WO, závada,
-  // řešení) přímo do activeSession, stejně jako appka už dělá s fotkami a
-  // materiálem — díky tomu appka může nabídnout živou kartu v Dnešní opravy,
-  // synchronizovanou s panelem Foto/Materiál na Timer obrazovce, a po STOP
-  // rovnou pokračovat s tím, co bylo zadané za běhu.
-  async function updateSessionDraft(patch) {
-    if (!activeSession) return;
-    const updated = { ...activeSession, ...patch };
+  // Změna běžící časomíry (fotka / materiál / rozpracovaný text). Čte AKTUÁLNÍ
+  // stav z IndexedDB (ne ze zastaralé closure), aby rychlá úprava hned po
+  // synchronizační echo změně nepřepsala to, co mezitím doplnilo druhé
+  // zařízení. `fn` dostane aktuální session a vrátí novou.
+  const mutateSession = useCallback(async (fn) => {
+    if (!db) return;
+    const cur = (await db.getAll('activeSession').catch(() => []))[0];
+    if (!cur) return;
+    const updated = fn(cur);
+    if (!updated) return;
     await db.put('activeSession', updated);
     setActiveSession(updated);
-  }
+  }, [db]);
 
-  // Přidá jednu nebo více fotek pořízených/vybraných během běžícího timeru rovnou
-  // do activeSession v IndexedDB, takže přežijí zavření appky stejně spolehlivě
-  // jako čas. Vždy dostane pole (i pro jednu fotku), ať se víc fotek vybraných
-  // najednou nepřepisovalo kvůli zastaralé closure hodnotě activeSession.
-  async function addSessionPhoto(dataUrls) {
-    if (!activeSession) return;
+  const updateSessionDraft = (patch) => mutateSession(cur => ({ ...cur, ...patch }));
+  const addSessionPhoto = (dataUrls) => {
     const newPhotos = Array.isArray(dataUrls) ? dataUrls : [dataUrls];
-    const updated = { ...activeSession, photos: [...(activeSession.photos || []), ...newPhotos] };
-    await db.put('activeSession', updated);
-    setActiveSession(updated);
-  }
-
-  async function removeSessionPhoto(idx) {
-    if (!activeSession) return;
-    const updated = { ...activeSession, photos: (activeSession.photos || []).filter((_, i) => i !== idx) };
-    await db.put('activeSession', updated);
-    setActiveSession(updated);
-  }
-
-  // Materiál přidaný/upravený/smazaný během běžícího timeru se ukládá rovnou
-  // do activeSession stejně jako fotky — přežije zavření appky, a po STOP se
-  // spolu s fotkami předá do RecordForm přes pendingSession.
-  async function addSessionMaterial(mat) {
-    if (!activeSession) return;
-    const updated = { ...activeSession, materials: [...(activeSession.materials || []), mat] };
-    await db.put('activeSession', updated);
-    setActiveSession(updated);
-  }
-
-  async function updateSessionMaterial(idx, mat) {
-    if (!activeSession) return;
-    const current = activeSession.materials || [];
-    const updated = { ...activeSession, materials: current.map((m, i) => i === idx ? mat : m) };
-    await db.put('activeSession', updated);
-    setActiveSession(updated);
-  }
-
-  async function removeSessionMaterial(idx) {
-    if (!activeSession) return;
-    const updated = { ...activeSession, materials: (activeSession.materials || []).filter((_, i) => i !== idx) };
-    await db.put('activeSession', updated);
-    setActiveSession(updated);
-  }
+    return mutateSession(cur => ({ ...cur, photos: [...(cur.photos || []), ...newPhotos] }));
+  };
+  const removeSessionPhoto = (idx) => mutateSession(cur => ({ ...cur, photos: (cur.photos || []).filter((_, i) => i !== idx) }));
+  const addSessionMaterial = (mat) => mutateSession(cur => ({ ...cur, materials: [...(cur.materials || []), mat] }));
+  const updateSessionMaterial = (idx, mat) => mutateSession(cur => ({ ...cur, materials: (cur.materials || []).map((m, i) => i === idx ? mat : m) }));
+  const removeSessionMaterial = (idx) => mutateSession(cur => ({ ...cur, materials: (cur.materials || []).filter((_, i) => i !== idx) }));
 
   async function stopTimer() {
     const endTime = Date.now();
@@ -3992,7 +3902,7 @@ function App() {
     <div style={{ height: '100vh', background: theme.bg, transition: 'background 0.2s ease', display: 'flex', flexDirection: isDesktop ? 'row' : 'column' }}>
       {isDesktop && (
         <SideNav theme={theme} activeTab={activeTab} onSwitch={switchTab} onOpenSettings={() => push('settings')}
-          googleUser={googleUser} syncState={syncState} onSyncClick={() => runSync(db, { interactive: true })} />
+          googleUser={googleUser} syncState={syncState} onSyncClick={() => cloudSync.reconnect()} />
       )}
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {route.screen === 'home' && (
@@ -4014,7 +3924,7 @@ function App() {
             refreshTick={refreshTick}
             googleUser={googleUser}
             syncState={syncState}
-            onSyncClick={() => runSync(db, { interactive: true })}
+            onSyncClick={() => cloudSync.reconnect()}
           />
         )}
         {route.screen === 'machines' && (
@@ -4058,9 +3968,8 @@ function App() {
         {route.screen === 'settings' && (
           <CenteredFormWrap isDesktop={isDesktop}>
             <SettingsScreen theme={theme} mode={mode} setMode={handleSetMode} onBack={() => pop(1)} db={db} onDataRestored={handleDataRestored}
-              googleUser={googleUser} syncAuto={syncAuto} syncState={syncState}
-              onGoogleSignIn={handleGoogleSignIn} onGoogleSignOut={handleGoogleSignOut}
-              onSetSyncAuto={handleSetSyncAuto} onSyncNow={() => runSync(db, { interactive: true })} onResetAll={handleResetAll} />
+              googleUser={googleUser} syncState={syncState}
+              onGoogleSignIn={handleGoogleSignIn} onGoogleSignOut={handleGoogleSignOut} onResetAll={handleResetAll} />
           </CenteredFormWrap>
         )}
         {route.screen === 'datePicker' && (
@@ -4102,6 +4011,7 @@ function App() {
               theme={theme} session={activeSession} liveElapsed={liveEditElapsed}
               onBack={() => pop(1)} onHome={() => switchTab('timer')}
               onEdit={() => replaceTop({ screen: 'liveEdit' })}
+              onUpdateMaterial={updateSessionMaterial} onRemoveMaterial={removeSessionMaterial}
             />
           </CenteredFormWrap>
         )}
@@ -4167,43 +4077,44 @@ function App() {
 // s logem appky a nastavením nahoře, ať se navigace nemusí hledat na dvou
 // různých místech podle šířky okna.
 // Barva ikony synchronizace podle stavu — sdílená pro postranní i spodní menu.
+// idle = odhlášen (ikona se nezobrazí), connecting = právě se připojuje,
+// online = živě synchronizováno, error = spojení se nepovedlo.
 function syncColor(theme, status) {
   if (status === 'error') return theme.em;
-  if (status === 'reconnect') return theme.primary;
-  if (status === 'ok' || status === 'syncing') return theme.primary;
-  return theme.textFaint;
+  return theme.primary;
 }
 
 // Ikona/tlačítko synchronizace do menu. Zobrazí se jen když je uživatel
-// přihlášený ke cloudu. Točí se během synchronizace, mění barvu podle stavu.
+// přihlášený ke cloudu. Klik = zkusí znovu navázat spojení (užitečné po
+// výpadku); jinak jen ukazuje stav — appka jinak synchronizuje sama.
 function SyncMenuButton({ theme, googleUser, syncState, onClick, variant }) {
   if (!googleUser) return null;
   const st = syncState?.status;
   const col = syncColor(theme, st);
-  const spin = st === 'syncing' ? { animation: 'spin 0.8s linear infinite' } : null;
+  const spin = st === 'connecting' ? { animation: 'spin 0.8s linear infinite' } : null;
+  const title = st === 'connecting' ? 'Připojuji…' : st === 'error' ? 'Spojení se nezdařilo — ťukni pro nové zkusit' : 'Synchronizováno';
   if (variant === 'icon') {
     return (
-      <button onClick={onClick} disabled={st === 'syncing'} title={st === 'syncing' ? 'Synchronizuji…' : st === 'reconnect' ? 'Ťukni pro připojení' : 'Synchronizovat'}
-        style={{ width: 42, height: 42, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: st === 'reconnect' || st === 'error' ? theme.primarySoft : 'none', border: 'none', color: col }}>
+      <button onClick={onClick} title={title}
+        style={{ width: 42, height: 42, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: st === 'error' ? theme.primarySoft : 'none', border: 'none', color: col }}>
         <span style={{ display: 'inline-flex', ...spin }}><Icon.Refresh size={19} /></span>
       </button>
     );
   }
   if (variant === 'tab') {
     return (
-      <button onClick={onClick} disabled={st === 'syncing'} title={st === 'syncing' ? 'Synchronizuji…' : 'Synchronizovat'}
+      <button onClick={onClick} title={title}
         style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '10px 0 8px', color: col, background: 'none', border: 'none' }}>
         <span style={{ display: 'inline-flex', ...spin }}><Icon.Refresh size={21} /></span>
         <span style={{ fontSize: 10.5, fontWeight: 500 }}>Sync</span>
       </button>
     );
   }
-  const label = st === 'syncing' ? 'Obnovuji…' : 'Obnovit';
   return (
-    <button onClick={onClick} disabled={st === 'syncing'} title={label}
-      style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 12px', borderRadius: 11, background: st === 'reconnect' || st === 'error' ? theme.primarySoft : 'none', border: 'none', color: col, textAlign: 'left' }}>
+    <button onClick={onClick} title={title}
+      style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 12px', borderRadius: 11, background: st === 'error' ? theme.primarySoft : 'none', border: 'none', color: col, textAlign: 'left' }}>
       <span style={{ display: 'inline-flex', ...spin }}><Icon.Refresh size={19} /></span>
-      <span style={{ fontSize: 14, fontWeight: 500 }}>{label}</span>
+      <span style={{ fontSize: 14, fontWeight: 500 }}>Obnovit</span>
     </button>
   );
 }

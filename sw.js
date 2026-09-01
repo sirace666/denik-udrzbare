@@ -1,4 +1,4 @@
-const CACHE_NAME = 'denik-udrzbare-v6.74';
+const CACHE_NAME = 'denik-udrzbare-v6.82';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -42,7 +42,7 @@ self.addEventListener('fetch', (event) => {
 
   // Network-first for external CDN assets (React/Babel/fonts/icons) so updates
   // land when online, falling back to cache when offline.
-  const cdnHosts = ['https://unpkg.com', 'https://fonts.googleapis.com', 'https://fonts.gstatic.com', 'https://cdn.jsdelivr.net'];
+  const cdnHosts = ['https://unpkg.com', 'https://fonts.googleapis.com', 'https://fonts.gstatic.com', 'https://cdn.jsdelivr.net', 'https://www.gstatic.com'];
   if (cdnHosts.includes(url.origin)) {
     event.respondWith(
       fetch(event.request)

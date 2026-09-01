@@ -48,33 +48,37 @@
     (IndexedDB). Aplikace funguje plně offline.
   </li>
   <li>
-    <strong>Ve tvém Google Disku</strong> – pokud si zapneš volitelnou funkci
-    „Cloud synchronizace", aplikace vytvoří ve tvém Google Disku vlastní složku a
-    ukládá do ní kopii tvých dat a fotek, aby se přenášely mezi tvými zařízeními.
-    Aplikace používá oprávnění <code>drive.file</code> – má přístup výhradně
-    k souborům, které sama vytvořila, k žádnému jinému obsahu tvého Disku.
+    <strong>V tvém prostoru ve Firebase (Google Cloud)</strong> – pokud si zapneš
+    volitelnou funkci „Cloud synchronizace", aplikace ukládá kopii tvých dat
+    (texty do databáze Firestore, fotky do úložiště Firebase Storage), aby se
+    přenášely mezi tvými zařízeními v reálném čase. Data jsou vázaná na tvůj
+    přihlášený účet a přístup k nim mají jen požadavky ověřené tímto účtem
+    (bezpečnostní pravidla <code>request.auth.uid == vlastník</code>).
   </li>
 </ul>
 
 <h2>Sdílení dat</h2>
 <p>
-  Aplikace neodesílá tvá data na žádný vlastní ani cizí server. Nemá vlastní
-  backend, neobsahuje žádnou analytiku, reklamu ani sledovací nástroje. Data
-  neopouštějí tvé zařízení a tvůj Google účet.
+  Aplikace nemá vlastní backend ani server, neobsahuje žádnou analytiku, reklamu
+  ani sledovací nástroje. Data se ukládají jen v tvém zařízení a – při zapnuté
+  synchronizaci – v tvém vlastním prostoru ve Firebase, vázaném na tvůj Google
+  účet. Nikam jinam se neposílají.
 </p>
 
 <h2>Přístup k Google účtu</h2>
 <p>
   Při zapnutí synchronizace si aplikace vyžádá přihlášení přes Google a přístup
-  k tvému e-mailu (pro zobrazení, pod kterým účtem jsi přihlášen) a k souborům,
-  které si sama vytvoří na Google Disku. Přístup můžeš kdykoli odebrat na adrese
+  k tvému e-mailu a základnímu profilu (pro zobrazení, pod kterým účtem jsi
+  přihlášen). Přístup můžeš kdykoli odebrat na adrese
   <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.
 </p>
 
 <h2>Smazání dat</h2>
 <p>
-  Lokální data smažeš vymazáním dat webu v prohlížeči nebo odinstalací aplikace.
-  Data v Google Disku smažeš odstraněním složky aplikace přímo v Google Disku.
+  Lokální data smažeš vymazáním dat webu v prohlížeči, odinstalací aplikace nebo
+  tlačítkem „Resetovat vše" v Nastavení. Data v cloudu smaže autor aplikace na
+  vyžádání (kontakt níže); fotky starší jednoho roku se z úložiště mažou
+  automaticky.
 </p>
 
 <h2>Kontakt</h2>

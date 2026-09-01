@@ -24,6 +24,14 @@
 <link rel="preload" href="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" as="script" />
 <link rel="preload" href="https://unpkg.com/@babel/standalone@7/babel.min.js" as="script" />
 <link rel="preload" href="app.jsx" as="script" />
+<!-- Firebase SDK (compat build — obyčejné <script> tagy, žádný bundler
+     netřeba, stejně jako zbytek appky). Cloud synchronizace je volitelná,
+     ale appka Firebase potřebuje inicializovaný hned při startu (kvůli
+     tichému obnovení přihlášení), proto se načítá vždy, ne až na klik. -->
+<link rel="preload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" as="script" />
+<link rel="preload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js" as="script" />
+<link rel="preload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js" as="script" />
+<link rel="preload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js" as="script" />
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
@@ -51,6 +59,10 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
 <script type="text/babel" data-presets="react" src="app.jsx"></script>
 <script>
   if ('serviceWorker' in navigator) {
