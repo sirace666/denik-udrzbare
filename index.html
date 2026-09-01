@@ -16,6 +16,14 @@
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.2/src/regular/style.css" />
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.2/src/bold/style.css" />
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.2/src/fill/style.css" />
+<!-- Appka nemá build krok — React/Babel/vlastní kód se stahují a app.jsx
+     se transpiluje přímo v prohlížeči. Preload hinty tu prohlížeči řeknou,
+     ať začne stahovat všechny čtyři soubory hned, paralelně, místo aby na
+     app.jsx narazil až po zpracování <head> a čekal na něj sériově. -->
+<link rel="preload" href="https://unpkg.com/react@18/umd/react.production.min.js" as="script" />
+<link rel="preload" href="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" as="script" />
+<link rel="preload" href="https://unpkg.com/@babel/standalone@7/babel.min.js" as="script" />
+<link rel="preload" href="app.jsx" as="script" />
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
@@ -32,7 +40,7 @@
 </head>
 <body>
 <div id="root">
-  <div style="height:100%;display:flex;align-items:center;justify-content:center;">
+  <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background-color:#161826;">
     <div style="width:56px;height:56px;border-radius:16px;background:rgba(145,132,217,0.12);border:1px solid rgba(145,132,217,0.45);display:flex;align-items:center;justify-content:center;">
       <div style="width:22px;height:22px;border-radius:50%;border:2.5px solid rgba(145,132,217,0.25);border-top-color:#9184d9;animation:spin 0.8s linear infinite;"></div>
     </div>

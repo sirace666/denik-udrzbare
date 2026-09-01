@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.60';
+const APP_VERSION = '6.63';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -1571,19 +1571,18 @@ function YearScreen({ theme, db, onBack, onHome, onOpenMonth, onAddRecord, onSea
                   padding: isCurrentMonth ? '13px 13px' : '14px 14px', textAlign: 'left', backdropFilter: theme.blur,
                   opacity: isFuture && !hasData ? 0.5 : 1, display: 'flex', flexDirection: 'column',
                   aspectRatio: isDesktop ? '2.2' : undefined, justifyContent: isDesktop ? 'center' : undefined,
-                  minHeight: !isDesktop ? 92 : undefined,
                 }}
               >
                 <div style={{ fontSize: 14, fontWeight: 700, color: isCurrentMonth ? theme.text : theme.textDim, textTransform: 'capitalize', marginBottom: hasData ? 8 : 0 }}>{name}</div>
                 {hasData ? (
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', minHeight: !isDesktop ? 15 : undefined }}>
                     {data.cm > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.cm }}>{data.cm} CM</span>}
                     {data.cmOprava > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.cmAlt }}>{data.cmOprava} CM Opr.</span>}
                     {data.emSProstojem > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.em }}>{data.emSProstojem} EM</span>}
                     {data.emBezProstoje > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: theme.emAlt }}>{data.emBezProstoje} EM</span>}
                   </div>
                 ) : (
-                  <div style={{ fontSize: 11, color: theme.textFaint }}>bez záznamů</div>
+                  <div style={{ fontSize: 11, color: theme.textFaint, minHeight: !isDesktop ? 15 : undefined }}>bez záznamů</div>
                 )}
               </button>
             );

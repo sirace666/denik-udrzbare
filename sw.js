@@ -1,4 +1,4 @@
-const CACHE_NAME = 'denik-udrzbare-v6.60';
+const CACHE_NAME = 'denik-udrzbare-v6.63';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -56,21 +56,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first pro lokální app shell (index.html, app.jsx, manifest...) —
-  // appka se vždy pokusí načíst nejnovější verzi ze sítě jako první, ať po
-  // nahrání nové verze appky nezůstane krátce viditelná stará cache verze
-  // (klasické "probliknutí" staré verze při prvním načtení po update).
-  // Offline appka spadne na poslední uloženou verzi z cache, takže offline
-  // provoz zůstává funkční beze změny.
+  // Stale-while-revalidate pro lokální app shell (index.html, app.jsx,
+  // manifest...) — appka okamžitě odpoví z cache, ať appka naskočí bez
+  // čekání na síť, a zároveň na pozadí stáhne čerstvou verzi pro příště.
+  // Appka's "probliknutí staré verze" tu nehrozí: index.html už má vlastní
+  // mechanismus (registration.update() + controllerchange → reload()),
+  // který appku sám obnoví, jakmile se nová verze aktivuje — takže appka
+  // nemusí čekat na síť už při prvním vykreslení, jen při zjištění, že je
+  // dostupná novější verze.
   if (url.origin === self.location.origin) {
     event.respondWith(
-      fetch(event.request)
-        .then((res) => {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          return res;
+      caches.open(CACHE_NAME).then((cache) =>
+        cache.match(event.request).then((cached) => {
+          const network = fetch(event.request).then((res) => {
+            cache.put(event.request, res.clone());
+            return res;
+          }).catch(() => cached);
+          return cached || network;
         })
-        .catch(() => caches.match(event.request))
+      )
     );
   }
 });
