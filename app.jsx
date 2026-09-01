@@ -3,7 +3,7 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ============================================================
 // APP VERSION — zvednout při každé úpravě
 // ============================================================
-const APP_VERSION = '6.82';
+const APP_VERSION = '6.83';
 
 // ============================================================
 // DB LAYER — tenký vlastní wrapper nad nativním IndexedDB
@@ -280,7 +280,23 @@ const cloudSync = {
   async signIn() {
     const fb = ensureFirebase();
     if (!fb) throw new Error('Cloud služba se nenačetla — zkus to za chvíli znovu.');
-    await fb.auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    const provider = new firebase.auth.GoogleAuthProvider();
+    try {
+      await fb.auth.signInWithPopup(provider);
+    } catch (e) {
+      // Na GitHub Pages / v Brave popup často blokuje COOP politika nebo
+      // prohlížeč (auth/popup-blocked, auth/cancelled-popup-request,
+      // auth/popup-closed-by-user, COOP window.closed). Přepneme na
+      // přesměrování celé stránky — to COOP problémy nemá.
+      const code = e && e.code;
+      if (code === 'auth/popup-blocked' || code === 'auth/cancelled-popup-request'
+        || code === 'auth/popup-closed-by-user' || code === 'auth/web-storage-unsupported'
+        || code === 'auth/operation-not-supported-in-this-environment') {
+        await fb.auth.signInWithRedirect(provider);
+        return; // stránka se přesměruje; návrat vyřídí getRedirectResult při startu
+      }
+      throw e;
+    }
   },
   async signOut() {
     this.stopListening();
@@ -291,15 +307,18 @@ const cloudSync = {
   // Napojí realtime poslech všech synchronizovaných úložišť. Každá
   // vzdálená změna (z tohoto i jiného zařízení) se zapíše do IndexedDB
   // přes rawPut/rawDelete a appka o tom dostane echo přes onRemoteChange.
-  startListening(db, ownerUid, onRemoteChange) {
+  startListening(db, ownerUid, onRemoteChange, onStatus) {
     this.stopListening();
     const fb = ensureFirebase();
-    if (!fb) return;
+    if (!fb) { onStatus && onStatus('error', 'Cloud služba se nenačetla.'); return; }
     this.db = db;
     this.uid = ownerUid;
     const fs = fb.db;
     for (const store of SYNC_STORES) {
       const unsub = fs.collection('users').doc(ownerUid).collection(store).onSnapshot(async (snap) => {
+        // I prázdný první snapshot znamená „spojení navázáno" → appka může
+        // přepnout stav z „Připojuji…" na „Synchronizováno".
+        onStatus && onStatus('online');
         let changed = false;
         const chs = snap.docChanges();
         if (chs.length) console.log('[sync] přišlo z cloudu:', store, chs.map(c => c.type + ':' + c.doc.id).join(', '));
@@ -330,7 +349,13 @@ const cloudSync = {
           changed = true;
         }
         if (changed) onRemoteChange(store);
-      }, () => { /* výpadek spojení — Firestore SDK se sám znovu připojí a listener obnoví */ });
+      }, (err) => {
+        // Nejčastěji blokátor reklam / Brave Shields blokuje spojení na
+        // firestore.googleapis.com (err.code 'unavailable' + v konzoli
+        // net::ERR_BLOCKED_BY_CLIENT). Jinak se Firestore SDK připojí samo.
+        console.warn('[sync] poslech Firestore selhal:', store, err?.code || err?.message || err);
+        onStatus && onStatus('error', 'Spojení blokuje prohlížeč nebo rozšíření (blokátor / Shields). Povol doménu appky a ťukni na Synchronizovat.');
+      });
       this.listeners.push(unsub);
     }
   },
@@ -3617,22 +3642,46 @@ function App() {
   // přihlášený, napojí se realtime poslech Firestore; při odhlášení se
   // odpojí. Lokální data v IndexedDB se odhlášením nemažou, appka funguje
   // dál offline.
+  const connectSync = useCallback((uid) => {
+    setSyncState(st => ({ ...st, status: 'connecting', msg: null }));
+    cloudSync.startListening(db, uid, async (store) => {
+      setSyncState({ status: 'online', lastSyncAt: Date.now(), msg: null });
+      setRefreshTick(t => t + 1);
+      if (store === 'activeSession') {
+        const sessions = await db.getAll('activeSession');
+        setActiveSession(sessions[0] || null);
+      }
+    }, (status, msg) => {
+      setSyncState(st => status === 'online'
+        ? { status: 'online', lastSyncAt: st.lastSyncAt || Date.now(), msg: null }
+        : { ...st, status, msg: msg || null });
+    });
+  }, [db]);
+
+  // Klik na ikonu synchronizace — po výpadku / blokaci znovu naváže spojení
+  // (celý listener nasadí znovu, ne jen enableNetwork, který blokované
+  // spojení neprobudí). Dá i vizuální zpětnou vazbu — přepne na „Připojuji…".
+  const retrySync = useCallback(async () => {
+    const fb = ensureFirebase();
+    const user = fb && fb.auth.currentUser;
+    if (!user || !db) return;
+    try { await cloudSync.reconnect(); } catch {}
+    connectSync(user.uid);
+  }, [db, connectSync]);
+
   useEffect(() => {
     if (!db) return;
     const fb = ensureFirebase();
     if (!fb) { setSyncState({ status: 'idle', lastSyncAt: null, msg: null }); return; }
+    // Dokončí přihlášení, které proběhlo přes přesměrování (fallback z popupu).
+    fb.auth.getRedirectResult().catch((e) => {
+      console.warn('[sync] návrat z přihlášení selhal:', e?.code || e?.message || e);
+      setSyncState(st => ({ ...st, status: 'error', msg: e?.message || 'Přihlášení se nezdařilo.' }));
+    });
     const unsub = fb.auth.onAuthStateChanged((user) => {
       if (user) {
         setGoogleUser({ email: user.email });
-        setSyncState(st => ({ ...st, status: 'connecting', msg: null }));
-        cloudSync.startListening(db, user.uid, async (store) => {
-          setSyncState({ status: 'online', lastSyncAt: Date.now(), msg: null });
-          setRefreshTick(t => t + 1);
-          if (store === 'activeSession') {
-            const sessions = await db.getAll('activeSession');
-            setActiveSession(sessions[0] || null);
-          }
-        });
+        connectSync(user.uid);
       } else {
         cloudSync.stopListening();
         setGoogleUser(null);
@@ -3640,7 +3689,7 @@ function App() {
       }
     });
     return () => unsub();
-  }, [db]);
+  }, [db, connectSync]);
 
   const handleGoogleSignIn = useCallback(async () => {
     setSyncState(st => ({ ...st, status: 'connecting', msg: null }));
@@ -3902,7 +3951,7 @@ function App() {
     <div style={{ height: '100vh', background: theme.bg, transition: 'background 0.2s ease', display: 'flex', flexDirection: isDesktop ? 'row' : 'column' }}>
       {isDesktop && (
         <SideNav theme={theme} activeTab={activeTab} onSwitch={switchTab} onOpenSettings={() => push('settings')}
-          googleUser={googleUser} syncState={syncState} onSyncClick={() => cloudSync.reconnect()} />
+          googleUser={googleUser} syncState={syncState} onSyncClick={retrySync} />
       )}
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {route.screen === 'home' && (
@@ -3924,7 +3973,7 @@ function App() {
             refreshTick={refreshTick}
             googleUser={googleUser}
             syncState={syncState}
-            onSyncClick={() => cloudSync.reconnect()}
+            onSyncClick={retrySync}
           />
         )}
         {route.screen === 'machines' && (
