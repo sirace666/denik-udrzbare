@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Zásady ochrany soukromí – Deník údržbáře</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 24px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.6; color: #1a1a1a; background: #ffffff;
+    max-width: 760px; margin-inline: auto;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  .updated { color: #666; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  a { color: #4f46e5; }
+  code { background: rgba(127,127,127,0.15); padding: 1px 4px; border-radius: 3px; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e6e6e6; background: #161826; }
+    .updated { color: #9aa0b4; }
+    a { color: #a5b4fc; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Zásady ochrany soukromí</h1>
+<p class="updated">Aplikace „Deník údržbáře" · naposledy aktualizováno 1. 9. 2026</p>
+
+<p>
+  Deník údržbáře je webová aplikace (PWA) pro osobní evidenci oprav a údržby
+  strojů. Tento dokument popisuje, jak aplikace nakládá s daty.
+</p>
+
+<h2>Jaká data aplikace zpracovává</h2>
+<p>
+  Aplikace ukládá pouze data, která do ní sám zadáš: záznamy oprav (čas, číslo
+  zakázky, popis závady, řešení), databázi strojů, fotografie a nastavení
+  aplikace.
+</p>
+
+<h2>Kde jsou data uložena</h2>
+<ul>
+  <li>
+    <strong>Ve tvém zařízení</strong> – primárně se vše ukládá lokálně v prohlížeči
+    (IndexedDB). Aplikace funguje plně offline.
+  </li>
+  <li>
+    <strong>Ve tvém Google Disku</strong> – pokud si zapneš volitelnou funkci
+    „Cloud synchronizace", aplikace vytvoří ve tvém Google Disku vlastní složku a
+    ukládá do ní kopii tvých dat a fotek, aby se přenášely mezi tvými zařízeními.
+    Aplikace používá oprávnění <code>drive.file</code> – má přístup výhradně
+    k souborům, které sama vytvořila, k žádnému jinému obsahu tvého Disku.
+  </li>
+</ul>
+
+<h2>Sdílení dat</h2>
+<p>
+  Aplikace neodesílá tvá data na žádný vlastní ani cizí server. Nemá vlastní
+  backend, neobsahuje žádnou analytiku, reklamu ani sledovací nástroje. Data
+  neopouštějí tvé zařízení a tvůj Google účet.
+</p>
+
+<h2>Přístup k Google účtu</h2>
+<p>
+  Při zapnutí synchronizace si aplikace vyžádá přihlášení přes Google a přístup
+  k tvému e-mailu (pro zobrazení, pod kterým účtem jsi přihlášen) a k souborům,
+  které si sama vytvoří na Google Disku. Přístup můžeš kdykoli odebrat na adrese
+  <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.
+</p>
+
+<h2>Smazání dat</h2>
+<p>
+  Lokální data smažeš vymazáním dat webu v prohlížeči nebo odinstalací aplikace.
+  Data v Google Disku smažeš odstraněním složky aplikace přímo v Google Disku.
+</p>
+
+<h2>Kontakt</h2>
+<p>
+  Dotazy k ochraně soukromí: <a href="mailto:sirace666@gmail.com">sirace666@gmail.com</a>
+</p>
+
+</body>
+</html>
